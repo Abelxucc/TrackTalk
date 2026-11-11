@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from unittest.mock import patch
 from urllib.error import HTTPError
 
@@ -162,3 +162,25 @@ class FoodAITests(TestCase):
         self.assertEqual(week.status_code, 200)
         self.assertIn("nhs.uk", week.data["recommendation"]["source_url"])
         self.assertEqual(self.client.post(self.parse_url, self.payload, format="json").status_code, 503)
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": ""})
+    def test_recommendation_rolls_at_uk_midnight(self):
+        url = "/api/food-recommendations/"
+        self._record(self.user, datetime(2026, 6, 28, 23, tzinfo=timezone.utc), "Chickpeas")
+        self._record(self.user, datetime(2026, 7, 5, 22, 59, tzinfo=timezone.utc), "Chicken")
+        self._record(self.user, datetime(2026, 7, 6, 23, tzinfo=timezone.utc), "Lentils")
+
+        with patch("tracker.food_ai.timezone.now",
+                   return_value=datetime(2026, 7, 5, 22, 59, tzinfo=timezone.utc)):
+            sunday = self.client.get(url)
+        self.assertEqual(sunday.data["week_start"], date(2026, 6, 29))
+        self.assertEqual(sunday.data["recommendation"]["title"], "Try another fruit or vegetable")
+
+        with patch("tracker.food_ai.timezone.now",
+                   return_value=datetime(2026, 7, 5, 23, tzinfo=timezone.utc)):
+            monday = self.client.get(url)
+        self.assertEqual(monday.data["week_start"], date(2026, 7, 6))
+        groups = {group["label"]: group["foods"] for group in monday.data["groups"]}
+        self.assertEqual(groups["Protein foods"], ["Lentils"])
+        self.assertEqual(monday.data["recommendation"]["title"], "No pulses logged in the last 7 days")
+        self.assertEqual(FoodRecord.objects.filter(user=self.user).count(), 3)

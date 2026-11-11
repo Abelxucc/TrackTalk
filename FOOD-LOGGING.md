@@ -115,8 +115,11 @@ confirming. This uses `POST /api/food-records/parse/` with the existing login to
 The draft preserves explicitly provided times and quantities. For a draft
 without a meal type, the editor asks the user to choose one.
 
-**Home** and **Food → This week** use `GET /api/food-recommendations/` to show food
-groups and a suggestion based on the user's logged week (Monday to Sunday in
-the UK). AI selects from suggestions grounded in the NHS Eatwell Guide.
+**Home** and **Food → This week** use `GET /api/food-recommendations/`. The
+recommendation uses the requested date and the six preceding UK calendar days.
+On **Home**, the selected day is the end of that range. In **Food → This week**,
+the range ends today for the current week and on Sunday for past weeks. The
+weekly food groups cover Monday to Sunday. AI selects from suggestions grounded
+in the NHS Eatwell Guide.
 When AI is unavailable, the recommendation uses a preset suggestion. Manual
 recording is available alongside text entry.

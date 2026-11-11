@@ -32,7 +32,7 @@ void phone(WidgetTester tester, {Size size = const Size(390, 844)}) {
 const app = MaterialApp(home: AppShell(service: FoodService('test-token')));
 
 void main() {
-  testWidgets('Food uses meal rows and a separate weekly recommendation card', (
+  testWidgets('Food uses meal rows and a separate recommendation card', (
     tester,
   ) async {
     phone(tester);
@@ -51,7 +51,7 @@ void main() {
               },
             ],
             'recommendation': {
-              'title': 'No pulses logged this week',
+              'title': 'No pulses logged in the last 7 days',
               'body': 'Try lentils in soup.',
               'source_url': 'https://www.nhs.uk/',
             },
@@ -109,6 +109,57 @@ void main() {
       expect(find.text('Try lentils in soup.'), findsOneWidget);
     }, () => client);
   });
+
+  testWidgets(
+    'Recommendations follow the selected day and advance at midnight',
+    (tester) async {
+      phone(tester);
+      var now = DateTime(2026, 7, 8, 23, 59, 50);
+      final requestedDates = <String>[];
+      final client = MockClient((request) async {
+        if (request.url.path != '/api/food-recommendations/') {
+          return http.Response('[]', 200);
+        }
+        requestedDates.add(request.url.queryParameters['date']!);
+        return http.Response(
+          jsonEncode({
+            'week_start': '2026-07-06',
+            'week_end': '2026-07-12',
+            'days_logged': 0,
+            'groups': [],
+            'recommendation': null,
+          }),
+          200,
+        );
+      });
+      await http.runWithClient(() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: AppShell(
+              service: const FoodService('test-token'),
+              now: () => now,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(requestedDates, ['2026-07-08']);
+        await tap(tester, find.text('7'));
+        expect(requestedDates.last, '2026-07-07');
+        await tap(tester, find.text('8'));
+        expect(requestedDates.last, '2026-07-08');
+
+        await tap(tester, find.byKey(const Key('nav-food')));
+        await tap(tester, find.text('This week'));
+        expect(requestedDates.last, '2026-07-08');
+
+        now = DateTime(2026, 7, 9);
+        await tester.pump(const Duration(seconds: 10));
+        await tester.pumpAndSettle();
+        expect(requestedDates.last, '2026-07-09');
+        expect(find.text('Based on the 7 days ending 9 July'), findsOneWidget);
+      }, () => client);
+    },
+  );
 
   testWidgets(
     'Me has placeholder cards and selection animates across the bar',

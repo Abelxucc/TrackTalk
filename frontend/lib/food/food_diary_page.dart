@@ -10,12 +10,14 @@ class FoodDiaryPage extends StatefulWidget {
   const FoodDiaryPage({
     super.key,
     required this.service,
+    required this.today,
     required this.active,
     required this.openHistory,
     required this.addFood,
   });
 
   final FoodService service;
+  final DateTime today;
   final bool active;
   final Future<void> Function(DateTime) openHistory;
   final VoidCallback addFood;
@@ -32,11 +34,16 @@ class _FoodDiaryPageState extends State<FoodDiaryPage> {
   static const _guideUrl =
       'https://www.gov.uk/government/publications/the-eatwell-guide';
 
-  DateTime _day = DateUtils.dateOnly(DateTime.now());
-  DateTime _weekStart = _monday(DateTime.now());
+  DateTime? _selectedDay;
+  DateTime? _selectedWeek;
   bool _showWeek = false;
   Future<List<FoodRecord>?>? _records;
   Future<FoodWeek?>? _week;
+
+  DateTime get _day => _selectedDay ?? widget.today;
+  DateTime get _weekStart => _selectedWeek ?? _monday(widget.today);
+  DateTime get _recommendationDate =>
+      _selectedWeek == null ? widget.today : _offset(_weekStart, 6);
 
   static DateTime _offset(DateTime date, int days) =>
       DateTime(date.year, date.month, date.day + days);
@@ -52,7 +59,9 @@ class _FoodDiaryPageState extends State<FoodDiaryPage> {
   @override
   void didUpdateWidget(FoodDiaryPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.active && !oldWidget.active) _load();
+    final dayChanged =
+        _showWeek && _selectedWeek == null && widget.today != oldWidget.today;
+    if (widget.active && (!oldWidget.active || dayChanged)) _load();
   }
 
   Future<T?> _tryLoad<T>(Future<T> Function() request) async {
@@ -65,7 +74,7 @@ class _FoodDiaryPageState extends State<FoodDiaryPage> {
 
   void _load() {
     if (_showWeek) {
-      _week = _tryLoad(() => widget.service.week(_weekStart));
+      _week = _tryLoad(() => widget.service.week(_recommendationDate));
     } else {
       _records = _tryLoad(widget.service.list);
     }
@@ -82,10 +91,12 @@ class _FoodDiaryPageState extends State<FoodDiaryPage> {
   void _changeDate(int direction) {
     setState(() {
       if (_showWeek) {
-        _weekStart = _offset(_weekStart, direction * 7);
+        final start = _offset(_weekStart, direction * 7);
+        _selectedWeek = start == _monday(widget.today) ? null : start;
         _load();
       } else {
-        _day = _offset(_day, direction);
+        final day = _offset(_day, direction);
+        _selectedDay = day == widget.today ? null : day;
       }
     });
   }
@@ -158,7 +169,7 @@ class _FoodDiaryPageState extends State<FoodDiaryPage> {
   );
 
   Widget _dateControl() {
-    final today = DateUtils.dateOnly(DateTime.now());
+    final today = widget.today;
     final end = _offset(_weekStart, 6);
     final dateLabel = _showWeek
         ? _weekStart.month == end.month
@@ -341,7 +352,7 @@ class _FoodDiaryPageState extends State<FoodDiaryPage> {
                 _recommendationTitle(),
                 const SizedBox(height: 7),
                 const Text(
-                  'Ideas based on what you’ve logged this week.',
+                  'Ideas based on your last 7 days of food logs.',
                   style: TextStyle(fontSize: 13),
                 ),
                 _textButton(
@@ -441,7 +452,7 @@ class _FoodDiaryPageState extends State<FoodDiaryPage> {
             ),
           ),
           const SizedBox(height: 13),
-          _weeklyRecommendation(week.tip),
+          _recommendationCard(week.tip),
         ],
       );
     },
@@ -497,14 +508,19 @@ class _FoodDiaryPageState extends State<FoodDiaryPage> {
     );
   }
 
-  Widget _weeklyRecommendation(FoodTip? tip) {
-    final pulses = tip?.title == 'No pulses logged this week';
+  Widget _recommendationCard(FoodTip? tip) {
+    final pulses = tip?.title == 'No pulses logged in the last 7 days';
     return _panel(
       color: _tipFill,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _recommendationTitle(),
+          const SizedBox(height: 4),
+          Text(
+            'Based on the 7 days ending ${FoodStyle.today(_recommendationDate)}',
+            style: const TextStyle(fontSize: 12, color: _muted),
+          ),
           if (tip != null) ...[
             const SizedBox(height: 10),
             Row(
@@ -540,7 +556,7 @@ class _FoodDiaryPageState extends State<FoodDiaryPage> {
           ],
           const SizedBox(height: 7),
           Text(
-            tip?.body ?? 'Log a meal to see a food idea for this week.',
+            tip?.body ?? 'Log a meal to see a food idea.',
             style: const TextStyle(fontSize: 14, height: 1.35),
           ),
         ],

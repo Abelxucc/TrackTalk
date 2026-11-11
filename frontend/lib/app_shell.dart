@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart' show DateUtils;
 
 import 'auth/LoginPage.dart';
 import 'HomePage.dart';
@@ -12,10 +15,11 @@ import 'shared/food_style.dart';
 import 'me_page.dart';
 
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, required this.service});
+  const AppShell({super.key, required this.service, this.now = DateTime.now});
 
   static const routeName = '/app';
   final FoodService service;
+  final DateTime Function() now;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -24,11 +28,43 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   final _foodNavigator = GlobalKey<NavigatorState>();
   FoodDestination _selected = FoodDestination.home;
+  late DateTime _today;
+  late final AppLifecycleListener _lifecycle;
+  Timer? _midnight;
   int _pendingWrites = 0;
   bool _signingOut = false;
   String? _error;
 
   bool get _busy => _signingOut || _pendingWrites > 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = widget.now();
+    _today = DateUtils.dateOnly(now);
+    _lifecycle = AppLifecycleListener(onResume: _updateToday);
+    _scheduleMidnight(now);
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    _midnight?.cancel();
+    super.dispose();
+  }
+
+  void _updateToday() {
+    final now = widget.now();
+    final today = DateUtils.dateOnly(now);
+    if (today != _today) setState(() => _today = today);
+    _scheduleMidnight(now);
+  }
+
+  void _scheduleMidnight(DateTime now) {
+    _midnight?.cancel();
+    final midnight = DateTime(now.year, now.month, now.day + 1);
+    _midnight = Timer(midnight.difference(now), _updateToday);
+  }
 
   void _busyChanged(bool busy) {
     if (!mounted) return;
@@ -112,11 +148,13 @@ class _AppShellState extends State<AppShell> {
                         children: [
                           HomePage(
                             service: widget.service,
+                            today: _today,
                             active: _selected == FoodDestination.home,
                             openHistory: _openHistory,
                           ),
                           FoodDiaryPage(
                             service: widget.service,
+                            today: _today,
                             active: _selected == FoodDestination.food,
                             openHistory: (date) =>
                                 _openHistory(date, HistoryFilter.food),

@@ -302,18 +302,18 @@ _FOODS = {
 _FOOD_GROUP = {name: group for group, names in _FOODS.items() for name in names}
 _TIPS = {
     "pulses_salad": (
-        "No pulses logged this week",
+        "No pulses logged in the last 7 days",
         "For variety, try adding chickpeas to a salad.",
         "#protein-foods",
     ),
     "pulses_soup": (
-        "No pulses logged this week",
+        "No pulses logged in the last 7 days",
         "For variety, try adding lentils to a soup.",
         "#protein-foods",
     ),
     "fruit_veg": (
         "Try another fruit or vegetable",
-        "Try a fruit or vegetable you enjoy that you haven’t logged this week.",
+        "Try a fruit or vegetable you enjoy that you haven’t logged in the last 7 days.",
         "#fruit-and-vegetables",
     ),
     "wholegrain": (
@@ -324,15 +324,13 @@ _TIPS = {
 }
 
 
-def _pick_tip(user_id, start, summary, candidates):
-    if not candidates:
-        return None
+def _pick_tip(user_id, day, summary, candidates):
     chosen = candidates[0]
     if os.environ.get("OPENAI_API_KEY", "").strip():
-        key_data = [user_id, str(start), os.environ.get("OPENAI_MODEL", DEFAULT_MODEL),
+        key_data = [user_id, str(day), os.environ.get("OPENAI_MODEL", DEFAULT_MODEL),
                     summary, candidates]
         digest = hashlib.sha256(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
-        cache_key = f"food-tip-v1:{digest}"
+        cache_key = f"food-tip-v2:{digest}"
         cached = cache.get(cache_key)
         if cached in candidates:
             chosen = cached
@@ -340,8 +338,8 @@ def _pick_tip(user_id, start, summary, candidates):
             try:
                 result = _ask(
                     "food_tip", _object({"tip_id": {"type": "string", "enum": candidates}}),
-                    "Choose one Eatwell Guide idea from the allowed options for the weekly "
-                    "food log summary. A missing entry is only missing from the log. "
+                    "Choose one Eatwell Guide idea from the allowed options for the last 7 days "
+                    "of food logs. A missing entry is only missing from the log. "
                     "Consider the logged days and prefer variety in less represented groups. "
                     "Return the ID only. Do not diagnose deficiencies.",
                     {**summary, "candidates": {
@@ -356,6 +354,42 @@ def _pick_tip(user_id, start, summary, candidates):
                 cache.set(cache_key, chosen, timeout=60)
     title, body, section = _TIPS[chosen]
     return {"title": title, "body": body, "source_url": GUIDE_URL + section}
+
+
+def _summarize_food(records):
+    groups = {group: {} for group in _GROUP_NAMES}
+    days_logged = set()
+    for record in records:
+        days_logged.add(record.eaten_at.astimezone(UK_TIME_ZONE).date())
+        for item in record.items.all():
+            normal = re.sub(r"[^\w]+", " ", item.name.casefold()).strip()
+            group = _FOOD_GROUP.get(normal, "other")
+            groups[group].setdefault(normal, item.name)
+    return groups, len(days_logged)
+
+
+def _recommend_food(user_id, day, records):
+    groups, days_logged = _summarize_food(records)
+    if not days_logged:
+        return None
+
+    candidates = []
+    names = {name for group in groups.values() for name in group}
+    has_pulses = _PULSES.intersection(names) or any(
+        re.search(r"\b(?:chickpeas?|lentils?|beans?|split peas)\b", name)
+        for name in names
+    )
+    if not has_pulses and any(groups[group] for group in _FOODS):
+        candidates.extend(["pulses_salad", "pulses_soup"])
+    if len(groups["fruit_veg"]) < 4:
+        candidates.append("fruit_veg")
+    if not {"oats", "wholemeal bread", "wholegrain bread", "wholewheat pasta",
+            "brown rice"}.intersection(groups["starchy"]):
+        candidates.append("wholegrain")
+    return _pick_tip(user_id, day, {
+        "days_logged": days_logged,
+        "distinct_foods_by_group": {group: len(foods) for group, foods in groups.items()},
+    }, candidates or ["fruit_veg"])
 
 
 class FoodWeekInput(serializers.Serializer):
@@ -376,34 +410,21 @@ def food_week(request):
     day = params.validated_data.get("date", timezone.localdate(timezone=UK_TIME_ZONE))
     start = day - timedelta(days=day.weekday())
     end = start + timedelta(days=7)
+    recent_start = day - timedelta(days=6)
+    recent_end = day + timedelta(days=1)
+    week_start_at = datetime.combine(start, time.min, tzinfo=UK_TIME_ZONE)
+    recent_end_at = datetime.combine(recent_end, time.min, tzinfo=UK_TIME_ZONE)
     records = list(FoodRecord.objects.filter(
         user=request.user,
-        eaten_at__gte=datetime.combine(start, time.min, tzinfo=UK_TIME_ZONE),
+        eaten_at__gte=datetime.combine(recent_start, time.min, tzinfo=UK_TIME_ZONE),
         eaten_at__lt=datetime.combine(end, time.min, tzinfo=UK_TIME_ZONE),
     ).prefetch_related("items"))
-    groups = {group: {} for group in _GROUP_NAMES}
-    for record in records:
-        for item in record.items.all():
-            normal = re.sub(r"[^\w]+", " ", item.name.casefold()).strip()
-            group = _FOOD_GROUP.get(normal, "other")
-            groups[group].setdefault(normal, item.name)
-    days_logged = len({record.eaten_at.astimezone(UK_TIME_ZONE).date() for record in records})
-    candidates = []
-    if days_logged:
-        names = {name for group in groups.values() for name in group}
-        has_pulses = _PULSES.intersection(names) or any(
-            re.search(r"\b(?:chickpeas?|lentils?|beans?|split peas)\b", name)
-            for name in names
-        )
-        if not has_pulses and any(groups[group] for group in _FOODS):
-            candidates.extend(["pulses_salad", "pulses_soup"])
-        if len(groups["fruit_veg"]) < 4:
-            candidates.append("fruit_veg")
-        if not {"oats", "wholemeal bread", "wholegrain bread", "wholewheat pasta",
-                "brown rice"}.intersection(groups["starchy"]):
-            candidates.append("wholegrain")
-        if not candidates:
-            candidates.append("fruit_veg")
+    groups, days_logged = _summarize_food(
+        record for record in records if record.eaten_at >= week_start_at
+    )
+    recommendation = _recommend_food(
+        request.user.pk, day, (record for record in records if record.eaten_at < recent_end_at)
+    )
     return Response({
         "week_start": start,
         "week_end": end - timedelta(days=1),
@@ -412,8 +433,5 @@ def food_week(request):
             {"label": _GROUP_NAMES[group], "foods": sorted(foods.values(), key=str.casefold)}
             for group, foods in groups.items() if group != "other" or foods
         ],
-        "recommendation": _pick_tip(request.user.pk, start, {
-            "days_logged": days_logged,
-            "distinct_foods_by_group": {group: len(foods) for group, foods in groups.items()},
-        }, candidates),
+        "recommendation": recommendation,
     })

@@ -11,11 +11,13 @@ class HomePage extends StatefulWidget {
   const HomePage({
     super.key,
     required this.service,
+    required this.today,
     required this.active,
     required this.openHistory,
   });
 
   final FoodService service;
+  final DateTime today;
   final bool active;
   final Future<void> Function(DateTime, HistoryFilter) openHistory;
 
@@ -27,9 +29,11 @@ typedef _DayRecords = ({List<FoodRecord> food, List<ActivityRecord> activity});
 typedef _Preview = ({String icon, String title, String detail, String time});
 
 class _HomePageState extends State<HomePage> {
-  DateTime _selected = DateTime.now();
+  DateTime? _selectedDate;
   Future<_DayRecords?>? _dayRecords;
   Future<FoodWeek?>? _week;
+
+  DateTime get _selected => _selectedDate ?? widget.today;
 
   @override
   void initState() {
@@ -40,7 +44,8 @@ class _HomePageState extends State<HomePage> {
   @override
   void didUpdateWidget(HomePage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.active && !oldWidget.active) _load();
+    final dayChanged = _selectedDate == null && widget.today != oldWidget.today;
+    if (widget.active && (!oldWidget.active || dayChanged)) _load();
   }
 
   Future<_DayRecords?> _loadRecords() async {
@@ -71,16 +76,14 @@ class _HomePageState extends State<HomePage> {
   DateTime _dayOffset(DateTime date, int days) =>
       DateTime(date.year, date.month, date.day + days);
 
-  DateTime _monday(DateTime date) => _dayOffset(date, 1 - date.weekday);
   bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
   void _chooseDate(DateTime date) {
+    if (date == _selected) return;
     setState(() {
-      if (!_sameDay(_monday(_selected), _monday(date))) {
-        _week = _loadWeek(date);
-      }
-      _selected = date;
+      _selectedDate = date == widget.today ? null : date;
+      _week = _loadWeek(date);
     });
   }
 
@@ -91,8 +94,8 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final today = DateTime.now();
-    final isToday = _sameDay(today, _selected);
+    final today = widget.today;
+    final isToday = _selected == today;
     const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     final date =
         '${weekdays[_selected.weekday - 1]}, ${FoodStyle.today(_selected)}';
@@ -292,14 +295,14 @@ class _HomePageState extends State<HomePage> {
     future: _week,
     builder: (context, snapshot) {
       if (snapshot.connectionState == ConnectionState.waiting) {
-        return _tipCard(null, message: 'Checking this week’s food logs…');
+        return _tipCard(null, message: 'Checking your food logs…');
       }
       return _tipCard(
         snapshot.data?.tip,
         message:
             snapshot.connectionState == ConnectionState.done &&
                 !snapshot.hasData
-            ? 'Could not load your weekly food recommendation.'
+            ? 'Could not load your food recommendation.'
             : null,
       );
     },
@@ -317,13 +320,18 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
+            const Text(
               'Food recommendation',
               style: TextStyle(
                 fontSize: 13,
                 color: color,
                 fontWeight: FontWeight.w600,
               ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Based on the 7 days ending ${FoodStyle.today(_selected)}',
+              style: const TextStyle(fontSize: 12, color: color),
             ),
             const SizedBox(height: 8),
             if (tip != null) ...[
@@ -338,9 +346,7 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 5),
             ],
             Text(
-              tip?.body ??
-                  message ??
-                  'Log a meal to see a food idea for this week.',
+              tip?.body ?? message ?? 'Log a meal to see a food idea.',
               style: TextStyle(fontSize: 14, color: color),
             ),
           ],
