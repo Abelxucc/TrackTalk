@@ -115,13 +115,13 @@ class _HomePageState extends State<HomePage> {
             ],
           ),
           Padding(
-            padding: const EdgeInsets.only(top: 5),
+            padding: const EdgeInsets.only(top: 8),
             child: Text(
               date,
               style: const TextStyle(fontSize: 14, color: FoodStyle.muted),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 20),
           DecoratedBox(
             decoration: BoxDecoration(
               color: FoodStyle.pale,
@@ -136,7 +136,7 @@ class _HomePageState extends State<HomePage> {
               ],
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 16),
           FutureBuilder<_DayRecords?>(
             future: _dayRecords,
             builder: (context, snapshot) {
@@ -228,7 +228,7 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 18),
         _recommendation(),
         const SizedBox(height: 14),
         Row(
@@ -360,7 +360,7 @@ class _HomePageState extends State<HomePage> {
       borderRadius: BorderRadius.circular(15),
     ),
     child: Padding(
-      padding: const EdgeInsets.all(9),
+      padding: const EdgeInsets.all(12),
       child: Row(
         children: [
           Icon(icon, size: 20, color: FoodStyle.forest),
@@ -437,7 +437,7 @@ class _RecordCarouselState extends State<_RecordCarousel> {
     Column(
       children: [
         SizedBox(
-          height: MediaQuery.textScalerOf(context).scale(84),
+          height: MediaQuery.textScalerOf(context).scale(64),
           child: PageView.builder(
             itemCount: widget.records.length,
             onPageChanged: (index) => setState(() => _page = index),
