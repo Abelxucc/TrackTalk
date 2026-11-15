@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from urllib.error import HTTPError, URLError
@@ -11,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from django.core.cache import cache
 from django.utils import timezone
+from django.views.decorators.cache import never_cache
 from rest_framework import serializers
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.decorators import (
@@ -20,6 +22,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 
+from .food_allergies import food_name_key, saved_allergies
 from .models import FoodRecord
 from .serializers import FoodEntrySerializer
 
@@ -300,37 +303,97 @@ _FOODS = {
     "oils": {"olive oil", "vegetable oil", "rapeseed oil", "sunflower oil", "unsaturated spread"},
 }
 _FOOD_GROUP = {name: group for group, names in _FOODS.items() for name in names}
+_TIP_GROUPS = {
+    "pulses": ("No pulses logged in the last 7 days", "#protein-foods"),
+    "fruit_veg": ("Add some variety", "#fruit-and-vegetables"),
+    "wholegrain": ("Try a higher-fibre starchy food", "#starchy-foods"),
+}
+_PULSE_NAMES = ("pulse", "pulses", "legume", "legumes", "bean", "beans")
+_FRUIT_VEG_NAMES = ("fruit vegetables", "fruit and vegetables", "fruit veg")
+_STARCHY_NAMES = ("grain", "grains", "wholegrain", "wholegrains", "starchy food", "starchy foods")
+_NO_ALLERGY_MATCH = "No food ideas match your allergy settings."
+
+
+@dataclass(frozen=True)
+class _FoodTip:
+    # Keep the displayed ingredient and the names used in filtering together.
+    food: str
+    group: str
+    names: tuple[str, ...]
+    categories: tuple[str, ...]
+    allergen_ids: tuple[str, ...] = ()
+
+    @property
+    def title(self):
+        return _TIP_GROUPS[self.group][0]
+
+    @property
+    def body(self):
+        return f"Try {self.food} for variety."
+
+
 _TIPS = {
-    "pulses_salad": (
-        "No pulses logged in the last 7 days",
-        "For variety, try adding chickpeas to a salad.",
-        "#protein-foods",
+    "chickpeas": _FoodTip(
+        "plain cooked chickpeas", "pulses",
+        ("chickpea", "chickpeas", "chick pea", "chick peas", "garbanzo", "garbanzos",
+         "bengal gram", "gram flour", "besan", "chana", "鹰嘴豆"),
+        _PULSE_NAMES,
     ),
-    "pulses_soup": (
-        "No pulses logged in the last 7 days",
-        "For variety, try adding lentils to a soup.",
-        "#protein-foods",
+    "lentils": _FoodTip(
+        "plain cooked lentils", "pulses",
+        ("lentil", "lentils", "dal", "dahl", "dhal", "daal", "小扁豆", "扁豆"),
+        _PULSE_NAMES,
     ),
-    "fruit_veg": (
-        "Try another fruit or vegetable",
-        "Try a fruit or vegetable you enjoy that you haven’t logged in the last 7 days.",
-        "#fruit-and-vegetables",
+    "apple": _FoodTip(
+        "an apple", "fruit_veg", ("apple", "apples", "苹果"),
+        ("fruit", "fruits", *_FRUIT_VEG_NAMES),
     ),
-    "wholegrain": (
-        "Try a higher-fibre starchy food",
-        "Try a wholegrain option such as brown rice or wholemeal bread.",
-        "#starchy-foods",
+    "carrots": _FoodTip(
+        "carrots", "fruit_veg", ("carrot", "carrots", "胡萝卜"),
+        ("vegetable", "vegetables", "veg", *_FRUIT_VEG_NAMES),
+    ),
+    "broccoli": _FoodTip(
+        "broccoli", "fruit_veg", ("broccoli", "西兰花"),
+        ("vegetable", "vegetables", "veg", *_FRUIT_VEG_NAMES),
+    ),
+    "brown_rice": _FoodTip(
+        "plain cooked brown rice", "wholegrain", ("rice", "brown rice", "糙米", "米饭"),
+        _STARCHY_NAMES,
+    ),
+    "oats": _FoodTip(
+        "plain cooked oats", "wholegrain", ("oat", "oats", "oatmeal", "porridge", "燕麦"),
+        (*_STARCHY_NAMES, "cereal", "cereals", "gluten", "gluten cereals", "gluten grains",
+         "gluten containing cereals", "cereals containing gluten"),
+        ("gluten_cereals",),
     ),
 }
+_FRUIT_VEG_TIPS = ("apple", "carrots", "broccoli")
+
+
+def _matches_food(avoid, tip):
+    if avoid.removeprefix("all ") in tip.categories:
+        return True
+    phrase = f" {avoid} "
+    return any(phrase in f" {name} " or f" {name} " in phrase for name in tip.names)
+
+
+def _filter_tips(candidates, allergies):
+    allergen_ids, other_foods = allergies
+    avoid_names = [food_name_key(food) for food in other_foods]
+    return [
+        tip_id for tip_id in candidates
+        if not any(allergen in allergen_ids for allergen in _TIPS[tip_id].allergen_ids)
+        and not any(_matches_food(name, _TIPS[tip_id]) for name in avoid_names)
+    ]
 
 
 def _pick_tip(user_id, day, summary, candidates):
     chosen = candidates[0]
-    if os.environ.get("OPENAI_API_KEY", "").strip():
+    if len(candidates) > 1 and os.environ.get("OPENAI_API_KEY", "").strip():
         key_data = [user_id, str(day), os.environ.get("OPENAI_MODEL", DEFAULT_MODEL),
                     summary, candidates]
         digest = hashlib.sha256(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
-        cache_key = f"food-tip-v2:{digest}"
+        cache_key = f"food-tip-v3:{digest}"
         cached = cache.get(cache_key)
         if cached in candidates:
             chosen = cached
@@ -343,7 +406,7 @@ def _pick_tip(user_id, day, summary, candidates):
                     "Consider the logged days and prefer variety in less represented groups. "
                     "Return the ID only. Do not diagnose deficiencies.",
                     {**summary, "candidates": {
-                        tip_id: _TIPS[tip_id][:2] for tip_id in candidates
+                        tip_id: (_TIPS[tip_id].title, _TIPS[tip_id].body) for tip_id in candidates
                     }},
                     max_tokens=128,
                 )
@@ -352,8 +415,7 @@ def _pick_tip(user_id, day, summary, candidates):
                     cache.set(cache_key, chosen, timeout=86400)
             except FoodAIUnavailable:
                 cache.set(cache_key, chosen, timeout=60)
-    title, body, section = _TIPS[chosen]
-    return {"title": title, "body": body, "source_url": GUIDE_URL + section}
+    return chosen
 
 
 def _summarize_food(records):
@@ -371,7 +433,7 @@ def _summarize_food(records):
 def _recommend_food(user_id, day, records):
     groups, days_logged = _summarize_food(records)
     if not days_logged:
-        return None
+        return None, None
 
     candidates = []
     names = {name for group in groups.values() for name in group}
@@ -380,16 +442,41 @@ def _recommend_food(user_id, day, records):
         for name in names
     )
     if not has_pulses and any(groups[group] for group in _FOODS):
-        candidates.extend(["pulses_salad", "pulses_soup"])
+        candidates.extend(["chickpeas", "lentils"])
+    fruit_veg = [
+        tip_id for tip_id in _FRUIT_VEG_TIPS
+        if not groups["fruit_veg"].keys() & set(_TIPS[tip_id].names)
+    ]
     if len(groups["fruit_veg"]) < 4:
-        candidates.append("fruit_veg")
+        candidates.extend(fruit_veg)
     if not {"oats", "wholemeal bread", "wholegrain bread", "wholewheat pasta",
             "brown rice"}.intersection(groups["starchy"]):
-        candidates.append("wholegrain")
-    return _pick_tip(user_id, day, {
+        candidates.extend(["brown_rice", "oats"])
+    candidates = candidates or fruit_veg or _FRUIT_VEG_TIPS
+    allergies = saved_allergies(user_id)
+    allowed = _filter_tips(candidates, allergies)
+    if not allowed:
+        return None, _NO_ALLERGY_MATCH
+    chosen = _pick_tip(user_id, day, {
         "days_logged": days_logged,
         "distinct_foods_by_group": {group: len(foods) for group, foods in groups.items()},
-    }, candidates or ["fruit_veg"])
+    }, allowed)
+
+    # A save can complete while the AI request is in flight.
+    latest = saved_allergies(user_id)
+    if latest != allergies:
+        allowed = _filter_tips(candidates, latest)
+        if not allowed:
+            return None, _NO_ALLERGY_MATCH
+        if chosen not in allowed:
+            chosen = allowed[0]
+
+    tip = _TIPS[chosen]
+    return {
+        "title": tip.title,
+        "body": tip.body,
+        "source_url": GUIDE_URL + _TIP_GROUPS[tip.group][1],
+    }, None
 
 
 class FoodWeekInput(serializers.Serializer):
@@ -401,6 +488,7 @@ class FoodWeekInput(serializers.Serializer):
         return value
 
 
+@never_cache
 @api_view(["GET"])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
@@ -422,7 +510,7 @@ def food_week(request):
     groups, days_logged = _summarize_food(
         record for record in records if record.eaten_at >= week_start_at
     )
-    recommendation = _recommend_food(
+    recommendation, recommendation_message = _recommend_food(
         request.user.pk, day, (record for record in records if record.eaten_at < recent_end_at)
     )
     return Response({
@@ -434,4 +522,5 @@ def food_week(request):
             for group, foods in groups.items() if group != "other" or foods
         ],
         "recommendation": recommendation,
+        "recommendation_message": recommendation_message,
     })

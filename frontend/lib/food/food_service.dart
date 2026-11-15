@@ -92,10 +92,17 @@ typedef FoodWeek = ({
   int daysLogged,
   Map<String, List<String>> groups,
   FoodTip? tip,
+  String? recommendationMessage,
+});
+typedef FoodAllergies = ({
+  Map<String, String> options,
+  List<String> allergenIds,
+  List<String> otherFoods,
 });
 
 class FoodService {
   const FoodService(this.token, {this.accountEmail});
+  static const _allergiesPath = '/api/food-allergies/';
   final String token;
   final String? accountEmail;
 
@@ -189,6 +196,36 @@ class FoodService {
               body: recommendation['body'] as String,
               sourceUrl: recommendation['source_url'] as String,
             ),
+      recommendationMessage: data['recommendation_message'] as String?,
+    );
+  }
+
+  Future<FoodAllergies> allergies() async {
+    final data = await _request(
+      'GET',
+      _allergiesPath,
+      token: token,
+    ) as Map<String, dynamic>;
+    final options = (data['options'] as List).cast<Map<String, dynamic>>();
+    return (
+      options: {
+        for (final option in options)
+          option['id'] as String: option['label'] as String,
+      },
+      allergenIds: (data['allergen_ids'] as List).cast<String>(),
+      otherFoods: (data['other_foods'] as List).cast<String>(),
+    );
+  }
+
+  Future<void> saveAllergies({
+    required List<String> allergenIds,
+    required List<String> otherFoods,
+  }) async {
+    await _request(
+      'PUT',
+      _allergiesPath,
+      token: token,
+      data: {'allergen_ids': allergenIds, 'other_foods': otherFoods},
     );
   }
 
@@ -272,8 +309,10 @@ class FoodService {
         );
       }
       if (response.statusCode == 404) {
-        throw const FoodException(
-          'This record could not be found. Refresh your history.',
+        throw FoodException(
+          path == _allergiesPath
+              ? 'Could not load allergy settings. Check that the backend is up to date.'
+              : 'This record could not be found. Refresh your history.',
         );
       }
       if (response.statusCode == 429) {
@@ -289,15 +328,18 @@ class FoodService {
           messages.isEmpty ? 'Please check your details.' : messages.join('\n'),
         );
       }
-      throw const FoodException(
-        'Could not save or load your record. Please try again.',
+      throw FoodException(
+        path == _allergiesPath
+            ? 'Could not save or load your allergies. Please try again.'
+            : 'Could not save or load your record. Please try again.',
       );
     } on TimeoutException {
-      throw FoodException(
-        path == '/api/food-records/parse/'
-            ? 'Could not read that record in time. Try again or add it manually.'
-            : 'Connection timed out. Check history before saving again.',
-      );
+      throw FoodException(switch (path) {
+        '/api/food-records/parse/' =>
+          'Could not read that record in time. Try again or add it manually.',
+        _allergiesPath => 'Connection timed out. Please try again.',
+        _ => 'Connection timed out. Check history before saving again.',
+      });
     } on http.ClientException {
       throw const FoodException(
         'Could not connect. Check that the backend is running.',

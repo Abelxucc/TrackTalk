@@ -93,6 +93,13 @@ class AccountProfile(models.Model):
     def __str__(self):
         return self.email
 
+
+class FoodAllergySettings(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    allergen_ids = models.JSONField(default=list)
+    other_foods = models.JSONField(default=list)
+
+
 class PasswordResetRequest(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"

@@ -34,6 +34,7 @@ Register an account if needed, then log in. Local iOS simulators use the same de
 | POST | `/api/auth/login/` | Verify email/password and return a token |
 | GET, POST | `/api/food-records/` | List owned meals or create one |
 | GET, PUT, PATCH, DELETE | `/api/food-records/<id>/` | Read, update or delete an owned meal |
+| GET, PUT | `/api/food-allergies/` | Load or replace the signed-in account's allergy settings |
 | GET | `/api/food-entries/` | Legacy read view, restricted to owned food items |
 | GET, POST | `/api/activity-records/` | List owned activities or create one |
 | GET, PUT, PATCH, DELETE | `/api/activity-records/<id>/` | Read, update or delete an owned activity |
@@ -123,3 +124,8 @@ weekly food groups cover Monday to Sunday. AI selects from suggestions grounded
 in the NHS Eatwell Guide.
 When AI is unavailable, the recommendation uses a preset suggestion. Manual
 recording is available alongside text entry.
+
+Open **Food → Food allergies** to select from the 14 UK food-labelling
+allergens or enter specific foods. The API filters the listed ingredients
+before choosing a suggestion, including when it uses the preset fallback.
+When every candidate is excluded, the recommendation card shows a message.

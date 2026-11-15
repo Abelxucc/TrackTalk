@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -109,6 +110,113 @@ void main() {
       expect(find.text('Try lentils in soup.'), findsOneWidget);
     }, () => client);
   });
+
+  testWidgets(
+    'Food allergies save selections and refresh both recommendations',
+    (tester) async {
+      phone(tester);
+      final settings = <String, dynamic>{
+        'options': [
+          {'id': 'milk', 'label': 'Milk'},
+          {
+            'id': 'gluten_cereals',
+            'label': 'Gluten cereals (e.g. wheat, oats)',
+          },
+        ],
+        'allergen_ids': <String>[],
+        'other_foods': <String>[],
+      };
+      const originalTip = 'Try plain cooked chickpeas for variety.';
+      const noMatch = 'No food ideas match your allergy settings.';
+      var saves = 0;
+      final client = MockClient((request) async {
+        switch (request.url.path) {
+          case '/api/food-allergies/':
+            expect(request.headers['authorization'], 'Token test-token');
+            if (request.method == 'PUT') {
+              final data = jsonDecode(request.body) as Map<String, dynamic>;
+              expect(data['allergen_ids'], ['gluten_cereals']);
+              saves++;
+              if (saves == 1) return http.Response('', 503);
+              settings.addAll(data);
+            }
+            return http.Response(jsonEncode(settings), 200);
+          case '/api/food-recommendations/':
+            final excludesChickpeas = (settings['other_foods'] as List)
+                .contains('Chickpeas');
+            return http.Response(
+              jsonEncode({
+                'week_start': '2026-11-09',
+                'week_end': '2026-11-15',
+                'days_logged': 1,
+                'groups': [],
+                'recommendation': excludesChickpeas
+                    ? null
+                    : {
+                        'title': 'No pulses logged in the last 7 days',
+                        'body': originalTip,
+                        'source_url': 'https://www.nhs.uk/',
+                      },
+                'recommendation_message': excludesChickpeas ? noMatch : null,
+              }),
+              200,
+            );
+          default:
+            return http.Response('[]', 200);
+        }
+      });
+      await http.runWithClient(() async {
+        await tester.pumpWidget(app);
+        await tester.pumpAndSettle();
+        expect(find.text(originalTip), findsOneWidget);
+        await tap(tester, find.byKey(const Key('nav-food')));
+        await tap(tester, find.text('This week'));
+        expect(find.text(originalTip), findsOneWidget);
+
+        final allergies = find.byKey(const Key('food-allergies'));
+        final gluten = find.byKey(const Key('allergen-gluten_cereals'));
+        final customFood = find.byKey(const Key('other-allergen-name'));
+        final save = find.byKey(const Key('save-food-allergies'));
+        await tap(tester, allergies);
+        expect(find.text('Common allergens'), findsOneWidget);
+        await tap(tester, gluten);
+        await tester.enterText(customFood, 'Chickpeas');
+        await tap(tester, find.byKey(const Key('add-other-allergen')));
+        await tester.enterText(customFood, 'Kiwi');
+        await tap(tester, save);
+        expect(
+          find.text('Could not save or load your allergies. Please try again.'),
+          findsOneWidget,
+        );
+        expect(find.text('Chickpeas'), findsOneWidget);
+        expect(find.text('Kiwi'), findsOneWidget);
+
+        await tap(tester, save);
+        expect(saves, 2);
+        expect(settings['other_foods'], ['Chickpeas', 'Kiwi']);
+        expect(find.text(noMatch), findsOneWidget);
+        expect(find.text(originalTip), findsNothing);
+        await tap(tester, find.byKey(const Key('nav-home')));
+        expect(find.text(noMatch), findsOneWidget);
+        expect(find.text(originalTip), findsNothing);
+
+        await tap(tester, find.byKey(const Key('nav-food')));
+        await tap(tester, allergies);
+        expect(find.text('Kiwi'), findsOneWidget);
+        expect(
+          find.descendant(
+            of: gluten,
+            matching: find.byIcon(CupertinoIcons.check_mark_circled_solid),
+          ),
+          findsOneWidget,
+        );
+        await tap(tester, find.byKey(const Key('remove-allergen-Chickpeas')));
+        await tap(tester, save);
+        expect(settings['other_foods'], ['Kiwi']);
+        expect(find.text(originalTip), findsOneWidget);
+      }, () => client);
+    },
+  );
 
   testWidgets(
     'Recommendations follow the selected day and advance at midnight',

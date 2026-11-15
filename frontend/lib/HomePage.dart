@@ -303,7 +303,7 @@ class _HomePageState extends State<HomePage> {
             snapshot.connectionState == ConnectionState.done &&
                 !snapshot.hasData
             ? 'Could not load your food recommendation.'
-            : null,
+            : snapshot.data?.recommendationMessage,
       );
     },
   );

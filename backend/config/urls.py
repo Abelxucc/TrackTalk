@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.urls import path
 
+from tracker.food_allergies import food_allergies
 from tracker.food_ai import food_week, parse_food_record
 from tracker.registration import register_account, validate_registration
 
@@ -19,6 +20,7 @@ urlpatterns = [
     path("api/food-entries/", food_entries, name="food_entries"),
     path("api/food-records/", FoodRecords.as_view(), name="food_records"),
     path("api/food-records/parse/", parse_food_record, name="parse_food_record"),
+    path("api/food-allergies/", food_allergies, name="food_allergies"),
     path("api/food-recommendations/", food_week, name="food_week"),
     path("api/food-records/<int:pk>/", FoodRecordDetail.as_view(), name="food_record_detail"),
     path("api/activity-records/", ActivityRecords.as_view(), name="activity_records"),

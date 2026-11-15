@@ -17,6 +17,7 @@ class FoodAITests(TestCase):
         self.user = get_user_model().objects.create_user(username="tester")
         self.client.force_authenticate(self.user)
         self.parse_url = "/api/food-records/parse/"
+        self.allergies_url = "/api/food-allergies/"
         self.week_url = "/api/food-recommendations/?date=2026-07-08"
         self.payload = {"text": "Porridge with milk for breakfast", "reference_date": "2026-07-08"}
 
@@ -24,6 +25,8 @@ class FoodAITests(TestCase):
         anonymous = APIClient()
         self.assertEqual(anonymous.post(self.parse_url, self.payload, format="json").status_code, 401)
         self.assertEqual(anonymous.get(self.week_url).status_code, 401)
+        self.assertEqual(anonymous.get(self.allergies_url).status_code, 401)
+        self.assertEqual(anonymous.put(self.allergies_url, {}, format="json").status_code, 401)
 
     @patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"})
     @patch("tracker.food_ai._ask")
@@ -144,7 +147,7 @@ class FoodAITests(TestCase):
         self._record(self.user, in_week, "Chicken")
         self._record(self.user, datetime(2026, 7, 5, 22, 59, tzinfo=timezone.utc), "Apple")
         self._record(other, in_week, "Chickpeas")
-        ask.return_value = {"tip_id": "pulses_soup"}
+        ask.return_value = {"tip_id": "lentils"}
         result = self.client.get(self.week_url)
         self.assertEqual(result.status_code, 200, result.data)
         self.assertEqual(result.data["days_logged"], 1)
@@ -174,7 +177,7 @@ class FoodAITests(TestCase):
                    return_value=datetime(2026, 7, 5, 22, 59, tzinfo=timezone.utc)):
             sunday = self.client.get(url)
         self.assertEqual(sunday.data["week_start"], date(2026, 6, 29))
-        self.assertEqual(sunday.data["recommendation"]["title"], "Try another fruit or vegetable")
+        self.assertIn("apple", sunday.data["recommendation"]["body"])
 
         with patch("tracker.food_ai.timezone.now",
                    return_value=datetime(2026, 7, 5, 23, tzinfo=timezone.utc)):
@@ -184,3 +187,86 @@ class FoodAITests(TestCase):
         self.assertEqual(groups["Protein foods"], ["Lentils"])
         self.assertEqual(monday.data["recommendation"]["title"], "No pulses logged in the last 7 days")
         self.assertEqual(FoodRecord.objects.filter(user=self.user).count(), 3)
+
+    def test_allergy_settings_validate_and_save_by_user_without_an_account_profile(self):
+        empty = self.client.get(self.allergies_url)
+        self.assertEqual(empty.status_code, 200, empty.data)
+        self.assertEqual(len(empty.data["options"]), 14)
+        self.assertEqual(empty.data["allergen_ids"], [])
+        self.assertEqual(empty.data["other_foods"], [])
+
+        saved = self.client.put(self.allergies_url, {
+            "allergen_ids": ["milk", "milk", "sesame"],
+            "other_foods": ["  Red   lentils ", "RED LENTILS", "Kiwifruit"],
+        }, format="json")
+        self.assertEqual(saved.status_code, 200, saved.data)
+        self.assertEqual(saved.data["allergen_ids"], ["milk", "sesame"])
+        self.assertEqual(saved.data["other_foods"], ["Red lentils", "Kiwifruit"])
+
+        invalid = self.client.put(self.allergies_url, {
+            "allergen_ids": ["unknown"],
+            "other_foods": ["..."],
+        }, format="json")
+        self.assertEqual(invalid.status_code, 400, invalid.data)
+        self.assertEqual(self.client.get(self.allergies_url).data, saved.data)
+
+        another = APIClient()
+        another.force_authenticate(get_user_model().objects.create_user(username="another"))
+        self.assertEqual(another.get(self.allergies_url).data, empty.data)
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"})
+    @patch("tracker.food_ai._ask")
+    def test_saved_allergies_filter_cached_candidates_and_reject_an_excluded_ai_choice(self, ask):
+        self._record(self.user, datetime(2026, 7, 8, 12, tzinfo=timezone.utc), "Chicken")
+        ask.return_value = {"tip_id": "chickpeas"}
+        self.assertIn("chickpeas", self.client.get(self.week_url).data["recommendation"]["body"])
+
+        saved = self.client.put(self.allergies_url, {
+            "allergen_ids": ["gluten_cereals"],
+            "other_foods": ["Garbanzo beans"],
+        }, format="json")
+        self.assertEqual(saved.status_code, 200, saved.data)
+
+        refreshed = self.client.get(self.week_url)
+        self.assertIn("lentils", refreshed.data["recommendation"]["body"])
+        candidates = ask.call_args.args[3]["candidates"]
+        self.assertNotIn("chickpeas", candidates)
+        self.assertNotIn("oats", candidates)
+        self.assertIn("brown_rice", candidates)
+        self.assertEqual(ask.call_count, 2)
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": ""})
+    def test_missing_ai_uses_only_unexcluded_tips_and_can_return_no_tip(self):
+        stamp = datetime(2026, 7, 8, 12, tzinfo=timezone.utc)
+        self._record(self.user, stamp, "Chicken")
+        self._record(self.user, stamp, "Carrots")
+        foods_to_avoid = ["All pulses", "Fruit", "Vegetables", "Rice"]
+        settings = {"allergen_ids": ["gluten_cereals"], "other_foods": foods_to_avoid}
+        self.assertEqual(self.client.put(self.allergies_url, settings, format="json").status_code, 200)
+
+        blocked = self.client.get(self.week_url)
+        self.assertIsNone(blocked.data["recommendation"])
+        self.assertEqual(blocked.data["recommendation_message"], "No food ideas match your allergy settings.")
+        groups = {group["label"]: group["foods"] for group in blocked.data["groups"]}
+        self.assertEqual(groups["Fruit & vegetables"], ["Carrots"])
+
+        settings["other_foods"] = foods_to_avoid[:-1]
+        self.assertEqual(self.client.put(self.allergies_url, settings, format="json").status_code, 200)
+        self.assertIn("brown rice", self.client.get(self.week_url).data["recommendation"]["body"])
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"})
+    @patch("tracker.food_ai._ask")
+    def test_an_allergy_saved_while_ai_is_selecting_a_tip_is_applied_to_the_response(self, ask):
+        self._record(self.user, datetime(2026, 7, 8, 12, tzinfo=timezone.utc), "Chicken")
+
+        def save_allergy(*_, **_kwargs):
+            response = self.client.put(self.allergies_url, {
+                "allergen_ids": [],
+                "other_foods": ["Red Lentil"],
+            }, format="json")
+            self.assertEqual(response.status_code, 200, response.data)
+            return {"tip_id": "lentils"}
+
+        ask.side_effect = save_allergy
+        week = self.client.get(self.week_url)
+        self.assertIn("chickpeas", week.data["recommendation"]["body"])

@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../history/food_history_order.dart';
 import '../shared/food_style.dart';
+import 'food_allergies_page.dart';
 import 'food_service.dart';
 
 class FoodDiaryPage extends StatefulWidget {
@@ -133,6 +134,9 @@ class _FoodDiaryPageState extends State<FoodDiaryPage> {
         _dateControl(),
         const SizedBox(height: 12),
         if (_showWeek) _weeklyView() else _dailyView(),
+        const SizedBox(height: 12),
+        _allergiesCard(),
+        if (!_showWeek) ...[const SizedBox(height: 12), _reviewLink()],
       ],
     ),
   );
@@ -341,59 +345,59 @@ class _FoodDiaryPageState extends State<FoodDiaryPage> {
                   ),
                 ),
               ),
-          const SizedBox(height: 7),
-          _allergiesCard(),
-          const SizedBox(height: 12),
-          _panel(
-            color: _tipFill,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _recommendationTitle(),
-                const SizedBox(height: 7),
-                const Text(
-                  'Ideas based on your last 7 days of food logs.',
-                  style: TextStyle(fontSize: 13),
-                ),
-                _textButton(
-                  'View this week',
-                  () => _selectView(true),
-                  icon: CupertinoIcons.chevron_right,
-                ),
-              ],
-            ),
-          ),
         ],
       );
     },
   );
 
-  Widget _allergiesCard() => _panel(
-    radius: 18,
-    padding: const EdgeInsets.fromLTRB(12, 5, 12, 5),
-    child: Row(
-      children: [
-        _iconTile(
-          CupertinoIcons.shield,
-          const Color(0xFFF2EBD9),
-          FoodStyle.forest,
-        ),
-        const SizedBox(width: 10),
-        Expanded(child: _labelPair('Food allergies', 'Save your allergens')),
-        _textButton('Add', _showAllergies, icon: CupertinoIcons.chevron_right),
-      ],
+  Widget _allergiesCard() => CupertinoButton(
+    key: const Key('food-allergies'),
+    padding: EdgeInsets.zero,
+    onPressed: _showAllergies,
+    child: _panel(
+      radius: 18,
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          _iconTile(
+            CupertinoIcons.shield,
+            const Color(0xFFF2EBD9),
+            FoodStyle.forest,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _labelPair('Food allergies', 'Choose foods to avoid'),
+          ),
+          const Icon(CupertinoIcons.chevron_right, size: 14, color: _muted),
+        ],
+      ),
     ),
   );
 
-  Future<void> _showAllergies() => showCupertinoDialog<void>(
-    context: context,
-    builder: (context) => CupertinoAlertDialog(
-      title: const Text('Food allergies'),
-      content: const Text('Allergy settings are coming soon.'),
-      actions: [
-        CupertinoDialogAction(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Done'),
+  Future<void> _showAllergies() async {
+    final saved = await Navigator.of(context).push<bool>(
+      CupertinoPageRoute(
+        builder: (_) => FoodAllergiesPage(service: widget.service),
+      ),
+    );
+    if (mounted && saved == true && _showWeek) setState(_load);
+  }
+
+  Widget _reviewLink() => _panel(
+    color: _tipFill,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _recommendationTitle(),
+        const SizedBox(height: 7),
+        const Text(
+          'Ideas based on your last 7 days of food logs.',
+          style: TextStyle(fontSize: 13),
+        ),
+        _textButton(
+          'View this week',
+          () => _selectView(true),
+          icon: CupertinoIcons.chevron_right,
         ),
       ],
     ),
@@ -452,7 +456,7 @@ class _FoodDiaryPageState extends State<FoodDiaryPage> {
             ),
           ),
           const SizedBox(height: 13),
-          _recommendationCard(week.tip),
+          _recommendationCard(week.tip, week.recommendationMessage),
         ],
       );
     },
@@ -508,7 +512,7 @@ class _FoodDiaryPageState extends State<FoodDiaryPage> {
     );
   }
 
-  Widget _recommendationCard(FoodTip? tip) {
+  Widget _recommendationCard(FoodTip? tip, String? message) {
     final pulses = tip?.title == 'No pulses logged in the last 7 days';
     return _panel(
       color: _tipFill,
@@ -556,7 +560,7 @@ class _FoodDiaryPageState extends State<FoodDiaryPage> {
           ],
           const SizedBox(height: 7),
           Text(
-            tip?.body ?? 'Log a meal to see a food idea.',
+            tip?.body ?? message ?? 'Log a meal to see a food idea.',
             style: const TextStyle(fontSize: 14, height: 1.35),
           ),
         ],
