@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tracktalk/food/food_page.dart';
 import 'package:tracktalk/history/food_history_page.dart';
 import 'package:tracktalk/food/food_service.dart';
+import 'package:tracktalk/shared/food_chrome.dart' show FoodComposer;
 
 // Food-flow tests keep their existing food responses when History also loads activities.
 MockClient foodClient(Future<http.Response> Function(http.Request) handler) =>
@@ -75,6 +76,67 @@ Future<void> enterDraft(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('switches to voice and restores the keyboard and typed drafts', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      const MaterialApp(home: FoodPage(service: FoodService('test-token'))),
+    );
+
+    final toggle = find.byKey(const Key('toggle-input-mode'));
+    final food = find.byKey(const Key('food-description'));
+    final activity = find.byKey(const Key('activity-description'));
+    final voice = find.text('Hold to speak');
+    final composer = find.byType(FoodComposer);
+    final send = find.byKey(const Key('parse-food'));
+    const foodText = 'Porridge for breakfast';
+    const activityText = 'I walked for 20 minutes.';
+
+    expect(find.byIcon(CupertinoIcons.mic), findsOneWidget);
+    expect(find.text('e.g. I had porridge for breakfast'), findsNothing);
+    final typingSize = tester.getSize(composer);
+    final typingToggle = tester.getCenter(toggle);
+    expect(tester.getRect(toggle).right, lessThan(tester.getRect(food).left));
+    expect(tester.getRect(food).right, lessThan(tester.getRect(send).left));
+    expect(tester.getCenter(food).dy, closeTo(typingToggle.dy, 0.5));
+    expect(tester.getCenter(send).dy, closeTo(typingToggle.dy, 0.5));
+
+    await tester.enterText(food, foodText);
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isTrue);
+    await tapVisible(tester, toggle);
+    expect(voice, findsOneWidget);
+    expect(food, findsNothing);
+    expect(find.byIcon(CupertinoIcons.keyboard), findsOneWidget);
+    expect(tester.testTextInput.isVisible, isFalse);
+    expect(tester.getSize(composer), typingSize);
+    expect(tester.getCenter(toggle), typingToggle);
+
+    await tapVisible(tester, find.byKey(const Key('record-mode-activity')));
+    expect(voice, findsOneWidget);
+    await tapVisible(tester, toggle);
+    expect(voice, findsNothing);
+    expect(tester.testTextInput.isVisible, isTrue);
+    expect(tester.getSize(composer), typingSize);
+    await tester.enterText(activity, activityText);
+    await tapVisible(tester, toggle);
+
+    await tapVisible(tester, find.byKey(const Key('record-mode-food')));
+    await tapVisible(tester, toggle);
+    expect(tester.widget<CupertinoTextField>(food).controller!.text, foodText);
+    expect(tester.testTextInput.isVisible, isTrue);
+    await tapVisible(tester, find.byKey(const Key('record-mode-activity')));
+    expect(
+      tester.widget<CupertinoTextField>(activity).controller!.text,
+      activityText,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('food chat waits for a reply and confirms each message once', (
     tester,
   ) async {
@@ -148,12 +210,10 @@ void main() {
       const confirmKey = Key('confirm-record');
       const typingKey = Key('food-typing');
       final composer = find.byKey(const Key('food-description'));
-      final exampleHint = find.text('e.g. I had porridge for breakfast');
 
       Future<void> send(String message) async {
         await tester.enterText(composer, message);
         await tester.pump();
-        expect(exampleHint, findsNothing);
         await tester.tap(find.byKey(sendKey));
         await tester.pump();
         expect(find.text(message), findsOneWidget);
@@ -169,7 +229,6 @@ void main() {
         expect(find.byKey(confirmKey), findsOneWidget);
       }
 
-      expect(exampleHint, findsOneWidget);
       expect(find.text('Try an example'), findsOneWidget);
       await send(messages.first);
       expect(find.text('08:30'), findsOneWidget);
@@ -190,7 +249,6 @@ void main() {
       await tapVisible(tester, find.text('Add amount'));
       expect(find.text('Edit food record'), findsOneWidget);
       await tapVisible(tester, find.text('Cancel'));
-      expect(exampleHint, findsNothing);
       expect(find.byKey(confirmKey), findsNothing);
       expect(saves, hasLength(1));
       expect(DateTime.parse(saves.first['eaten_at'] as String).toLocal(), now);
@@ -249,7 +307,6 @@ void main() {
       expect(find.text('12:40'), findsOneWidget);
       expect(find.text('✓ Saved'), findsNWidgets(2));
       expect(find.text('Try an example'), findsNothing);
-      expect(exampleHint, findsNothing);
       expect(find.text('2 bowl'), findsOneWidget);
 
       await tapVisible(tester, find.byKey(const Key('history-saved-food-1')));
@@ -261,7 +318,6 @@ void main() {
       await openChat('next-day-token');
       expect(find.text('Today, 5 November'), findsOneWidget);
       expect(find.text('Try an example'), findsOneWidget);
-      expect(exampleHint, findsOneWidget);
       expect(find.text('✓ Saved'), findsNothing);
       expect(saves, hasLength(2));
       expect(tester.takeException(), isNull);
@@ -279,16 +335,15 @@ void main() {
       ),
     );
     final composer = find.byKey(const Key('food-description'));
-    final hint = find.text('e.g. I had porridge for breakfast');
     await tester.enterText(composer, 'Unsent food');
     await tester.pump();
-    expect(hint, findsNothing);
+    expect(find.text('Unsent food'), findsOneWidget);
 
     now = DateTime(2026, 11, 5);
     await tester.pump(const Duration(seconds: 2));
     expect(find.text('Today, 5 November'), findsOneWidget);
     expect(find.text('Unsent food'), findsNothing);
-    expect(hint, findsOneWidget);
+    expect(find.text('Type what you ate...'), findsOneWidget);
   });
 
   test('amount formatting preserves integer zeroes and missing quantities', () {

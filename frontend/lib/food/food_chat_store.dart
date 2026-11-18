@@ -25,20 +25,14 @@ class FoodChatStore {
   final SharedPreferences _preferences;
   final String _key;
 
-  ({
-    bool showExample,
-    bool showActivityExample,
-    List<FoodChatTurn> turns,
-    List<ActivityChatTurn> activityTurns,
-  })?
-  read(DateTime day) {
+  ({List<FoodChatTurn> turns, List<ActivityChatTurn> activityTurns})? read(
+    DateTime day,
+  ) {
     final data = _preferences.getString(_key);
     if (data == null) return null;
     final saved = jsonDecode(data) as Map<String, dynamic>;
     if (saved['day'] != _dateKey(day)) return null;
     return (
-      showExample: saved['show_example'] as bool,
-      showActivityExample: saved['show_activity_example'] as bool? ?? true,
       turns: [
         for (final item
             in (saved['turns'] as List).cast<Map<String, dynamic>>())
@@ -65,15 +59,14 @@ class FoodChatStore {
 
   Future<void> save(
     DateTime day, {
-    required bool showExample,
     required List<FoodChatTurn> turns,
-    required bool showActivityExample,
     required List<ActivityChatTurn> activityTurns,
   }) async {
     final data = jsonEncode({
       'day': _dateKey(day),
-      'show_example': showExample,
-      'show_activity_example': showActivityExample,
+      // Older versions still read these fields when restoring the chat.
+      'show_example': turns.isEmpty,
+      'show_activity_example': activityTurns.isEmpty,
       'turns': [
         for (final turn in turns)
           if (turn.saved case final record?)

@@ -35,6 +35,7 @@ class FoodPage extends StatefulWidget {
 
 class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
   final _description = TextEditingController();
+  final _composerFocus = FocusNode();
   final _chatScroll = ScrollController();
   final _chat = <FoodChatTurn>[];
   final _activityDescription = TextEditingController();
@@ -52,11 +53,10 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
   ActivityRecord? _savedActivity;
   String? _activityError;
   late bool _activityMode;
+  bool _voiceInput = false;
   bool _saving = false;
   bool _parsing = false;
   bool _askingToDiscard = false;
-  bool _showFoodExample = true;
-  bool _showActivityExample = true;
   String? _activityParseError;
   String? _parseError;
   bool get _busy => _saving || _parsing || _loadingChat;
@@ -76,8 +76,6 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    _description.addListener(_hideFoodExample);
-    _activityDescription.addListener(_hideActivityExample);
     _draft = widget.initialRecord;
     _activityMode = widget.startWithActivity && widget.initialRecord == null;
     _chatDay = _localDay(widget.now());
@@ -97,6 +95,7 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _midnight?.cancel();
     _description.dispose();
+    _composerFocus.dispose();
     _chatScroll.dispose();
     _activityDescription.dispose();
     _activityChatScroll.dispose();
@@ -146,10 +145,8 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
       _chatDay = day;
       _chat.clear();
       _parseError = null;
-      _showFoodExample = true;
       _activityChat.clear();
       _activityParseError = null;
-      _showActivityExample = true;
     });
     _persistChat();
   }
@@ -165,9 +162,7 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
         _chatStore = store;
         _chatDay = day;
         if (restored != null) {
-          _showFoodExample = restored.showExample;
           _chat.addAll(restored.turns);
-          _showActivityExample = restored.showActivityExample;
           _activityChat.addAll(restored.activityTurns);
         }
       });
@@ -187,28 +182,8 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
 
   void _persistChat() {
     unawaited(
-      _chatStore?.save(
-        _chatDay,
-        showExample: _showFoodExample,
-        turns: _chat,
-        showActivityExample: _showActivityExample,
-        activityTurns: _activityChat,
-      ),
+      _chatStore?.save(_chatDay, turns: _chat, activityTurns: _activityChat),
     );
-  }
-
-  void _hideFoodExample() {
-    if (!_showFoodExample || _description.text.trim().isEmpty) return;
-    setState(() => _showFoodExample = false);
-    _persistChat();
-  }
-
-  void _hideActivityExample() {
-    if (!_showActivityExample || _activityDescription.text.trim().isEmpty) {
-      return;
-    }
-    setState(() => _showActivityExample = false);
-    _persistChat();
   }
 
   Future<void> _submitRecord() async {
@@ -216,7 +191,7 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
     final activity = _activityMode;
     final input = activity ? _activityDescription : _description;
     final text = input.text.trim();
-    if (_busy || text.isEmpty || _hasDraft) return;
+    if (_busy || _voiceInput || text.isEmpty || _hasDraft) return;
     final sentAt = widget.now();
     FocusScope.of(context).unfocus();
     input.clear();
@@ -273,7 +248,6 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
           _chat.removeLast();
           _activityChat.add(ActivityChatTurn(text, sentAt));
           _activityMode = true;
-          _showActivityExample = false;
         }
         _savedActivity = null;
         _activityDraft = activityDraft;
@@ -296,7 +270,6 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
           _activityChat.removeLast();
           _chat.add(FoodChatTurn(text, sentAt));
           _activityMode = false;
-          _showFoodExample = false;
         }
         _saved = null;
         _draft = parsed.food!;
@@ -699,11 +672,9 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
                     FoodComposer(
                       activity: _activityMode,
                       saved: _savedActivity != null,
-                      showExample:
-                          !_loadingChat &&
-                          (_activityMode
-                              ? _showActivityExample
-                              : _showFoodExample),
+                      voiceInput: _voiceInput,
+                      focusNode: _composerFocus,
+                      onToggleInputMode: _toggleInputMode,
                       controller: showActivityChat
                           ? _activityDescription
                           : showChat
@@ -728,6 +699,15 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
     if (_activityMode == activity) return;
     FocusScope.of(context).unfocus();
     setState(() => _activityMode = activity);
+  }
+
+  void _toggleInputMode() {
+    setState(() => _voiceInput = !_voiceInput);
+    if (_voiceInput) {
+      _composerFocus.unfocus();
+    } else {
+      _composerFocus.requestFocus();
+    }
   }
 
   List<Widget> _activityInput() => [
@@ -1079,7 +1059,10 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
         padding: EdgeInsets.zero,
         onPressed: _busy
             ? null
-            : () => controller.text = text.replaceAll('\n', ' '),
+            : () {
+                if (_voiceInput) setState(() => _voiceInput = false);
+                controller.text = text.replaceAll('\n', ' ');
+              },
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
           decoration: BoxDecoration(
