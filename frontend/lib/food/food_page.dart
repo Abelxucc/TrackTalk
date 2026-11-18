@@ -14,6 +14,8 @@ import 'food_editor.dart';
 import '../history/food_history_page.dart';
 import 'food_service.dart';
 import '../shared/food_style.dart';
+import 'voice_capture.dart';
+import 'voice_recording_overlay.dart';
 
 class FoodPage extends StatefulWidget {
   static const routeName = '/food/add-record';
@@ -24,11 +26,13 @@ class FoodPage extends StatefulWidget {
     this.initialRecord,
     this.startWithActivity = false,
     this.now = DateTime.now,
+    this.recordVoice = captureVoice,
   });
   final FoodService service;
   final FoodRecord? initialRecord;
   final bool startWithActivity;
   final DateTime Function() now;
+  final VoiceCapture recordVoice;
   @override
   State<FoodPage> createState() => _FoodPageState();
 }
@@ -41,6 +45,8 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
   final _activityDescription = TextEditingController();
   final _activityChatScroll = ScrollController();
   final _activityChat = <ActivityChatTurn>[];
+  final _voiceOverlay = OverlayPortalController();
+  final _voiceLevel = ValueNotifier(0.0);
   late DateTime _chatDay;
   Timer? _midnight;
   FoodChatStore? _chatStore;
@@ -54,12 +60,23 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
   String? _activityError;
   late bool _activityMode;
   bool _voiceInput = false;
+  VoiceInputStatus? _voiceStatus;
+  Completer<bool>? _voiceRelease;
+  ({int id, double downY})? _voicePointer;
+  bool _cancelVoiceOnRelease = false;
   bool _saving = false;
   bool _parsing = false;
   bool _askingToDiscard = false;
   String? _activityParseError;
   String? _parseError;
-  bool get _busy => _saving || _parsing || _loadingChat;
+  bool get _busy => _saving || _parsing || _loadingChat || _voiceStatus != null;
+
+  bool get _canSpeak =>
+      _voiceInput &&
+      !_busy &&
+      !_hasDraft &&
+      !_editingRecord &&
+      !_askingToDiscard;
 
   FoodChatTurn? get _pendingTurn {
     final last = _chat.lastOrNull;
@@ -93,6 +110,9 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    final release = _voiceRelease;
+    if (release != null && !release.isCompleted) release.complete(false);
+    _voiceLevel.dispose();
     _midnight?.cancel();
     _description.dispose();
     _composerFocus.dispose();
@@ -104,7 +124,10 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) return;
+    if (state != AppLifecycleState.resumed) {
+      _finishVoiceInput(_voicePointer?.id, transcribe: false);
+      return;
+    }
     _resetChatIfNewDay();
     _scheduleChatReset();
   }
@@ -186,15 +209,20 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _submitRecord() async {
+  Future<String?> _submitRecord({String? transcript}) async {
     _resetChatIfNewDay();
     final activity = _activityMode;
     final input = activity ? _activityDescription : _description;
-    final text = input.text.trim();
-    if (_busy || _voiceInput || text.isEmpty || _hasDraft) return;
+    final text = (transcript ?? input.text).trim();
+    if (_busy ||
+        (_voiceInput && transcript == null) ||
+        text.isEmpty ||
+        _hasDraft) {
+      return null;
+    }
     final sentAt = widget.now();
     FocusScope.of(context).unfocus();
-    input.clear();
+    if (transcript == null) input.clear();
     setState(() {
       if (activity) {
         _activityChat.add(ActivityChatTurn(text, sentAt));
@@ -206,6 +234,22 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
       _parsing = true;
     });
     _scrollToLatestTurn();
+
+    String fail(String error) {
+      if (!mounted) return error;
+      if (transcript == null) input.text = text;
+      setState(() {
+        if (activity) {
+          _activityChat.removeLast();
+        } else {
+          _chat.removeLast();
+        }
+        _setComposerError(error, activity: activity);
+        _parsing = false;
+      });
+      _resetChatIfNewDay();
+      return error;
+    }
 
     final minimumWait = Future<void>.delayed(const Duration(seconds: 1));
     final ({FoodDraft? food, ActivityDraft? activity}) parsed;
@@ -222,26 +266,17 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
         }
       });
     } on FoodException catch (error) {
-      _restoreUnsentText(text, error.message, activity: activity);
-      return;
+      return fail(error.message);
     } catch (_) {
-      _restoreUnsentText(
-        text,
-        'Could not read that record. Try again or add it manually.',
-        activity: activity,
-      );
-      return;
+      return fail('Could not read that record. Try again or add it manually.');
     }
-    if (!mounted) return;
+    if (!mounted) return null;
     final activityDraft = parsed.activity;
     if (activityDraft != null) {
       if (!activity && _activityDraft != null && _savedActivity == null) {
-        _restoreUnsentText(
-          text,
+        return fail(
           'Finish your current Activity draft before sending another.',
-          activity: false,
         );
-        return;
       }
       setState(() {
         if (!activity) {
@@ -258,12 +293,7 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
       _persistChat();
     } else {
       if (activity && _draft != null && _saved == null) {
-        _restoreUnsentText(
-          text,
-          'Finish your current Food draft before sending another.',
-          activity: true,
-        );
-        return;
+        return fail('Finish your current Food draft before sending another.');
       }
       setState(() {
         if (activity) {
@@ -286,22 +316,15 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
         !FoodStyle.meals.containsKey(_draft!.mealType)) {
       await _edit();
     }
+    return null;
   }
 
-  void _restoreUnsentText(String text, String error, {required bool activity}) {
-    if (!mounted) return;
-    (activity ? _activityDescription : _description).text = text;
-    setState(() {
-      if (activity) {
-        _activityChat.removeLast();
-        _activityParseError = error;
-      } else {
-        _chat.removeLast();
-        _parseError = error;
-      }
-      _parsing = false;
-    });
-    _resetChatIfNewDay();
+  void _setComposerError(String? error, {required bool activity}) {
+    if (activity) {
+      _activityParseError = error;
+    } else {
+      _parseError = error;
+    }
   }
 
   void _scrollToLatestTurn() {
@@ -614,78 +637,102 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
         ? _pendingActivityTurn != null
         : _pendingTurn != null;
     return FoodStyle.theme(
-      PopScope(
-        canPop: !_busy && widget.initialRecord != null,
-        onPopInvokedWithResult: (didPop, _) {
-          if (!didPop && !_busy && _hasDraft) _back();
-        },
-        child: CupertinoPageScaffold(
-          child: SafeArea(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520),
-                child: Column(
-                  children: [
-                    FoodHeader(
-                      title: widget.initialRecord == null
-                          ? 'Add record'
-                          : 'Edit record',
-                      subtitle: 'Today, ${FoodStyle.today(_chatDay)}',
-                      onHistory: _busy ? null : _history,
-                      backEnabled: !_busy,
-                      showBack: _hasDraft || widget.initialRecord != null,
-                      onBack: _back,
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 22),
-                      child: FoodModeSelector(
-                        activity: _activityMode,
-                        onChanged: _busy || widget.initialRecord != null
-                            ? null
-                            : _selectMode,
+      OverlayPortal(
+        controller: _voiceOverlay,
+        overlayLocation: OverlayChildLocation.rootOverlay,
+        overlayChildBuilder: (_) => VoiceRecordingOverlay(
+          status: _voiceStatus ?? VoiceInputStatus.opening,
+          level: _voiceLevel,
+          canceling: _cancelVoiceOnRelease,
+          onCancel: _voicePointer == null
+              ? () => _finishVoiceInput(null, transcribe: false)
+              : null,
+          onTranscribe: _voicePointer == null
+              ? () => _finishVoiceInput(null, transcribe: true)
+              : null,
+        ),
+        child: PopScope(
+          canPop: !_busy && widget.initialRecord != null,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop && !_busy && _hasDraft) _back();
+          },
+          child: CupertinoPageScaffold(
+            child: SafeArea(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 520),
+                  child: Column(
+                    children: [
+                      FoodHeader(
+                        title: widget.initialRecord == null
+                            ? 'Add record'
+                            : 'Edit record',
+                        subtitle: 'Today, ${FoodStyle.today(_chatDay)}',
+                        onHistory: _busy ? null : _history,
+                        backEnabled: !_busy,
+                        showBack: _hasDraft || widget.initialRecord != null,
+                        onBack: _back,
                       ),
-                    ),
-                    Expanded(
-                      child: ListView(
-                        key: PageStorageKey((
-                          _activityMode,
-                          saved,
-                          showChat,
-                          showActivityChat,
-                        )),
-                        controller: showActivityChat
-                            ? _activityChatScroll
-                            : showChat
-                            ? _chatScroll
-                            : null,
-                        physics: const BouncingScrollPhysics(
-                          parent: AlwaysScrollableScrollPhysics(),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 22),
+                        child: FoodModeSelector(
+                          activity: _activityMode,
+                          onChanged: _busy || widget.initialRecord != null
+                              ? null
+                              : _selectMode,
                         ),
-                        padding: const EdgeInsets.fromLTRB(22, 12, 22, 18),
-                        children: _activityMode
-                            ? (showActivityChat
-                                  ? _activityInput()
-                                  : _activityReview(_activityDraft!))
-                            : (showChat ? _foodChat() : _review(record!)),
                       ),
-                    ),
-                    FoodComposer(
-                      activity: _activityMode,
-                      saved: _savedActivity != null,
-                      voiceInput: _voiceInput,
-                      focusNode: _composerFocus,
-                      onToggleInputMode: _toggleInputMode,
-                      controller: showActivityChat
-                          ? _activityDescription
-                          : showChat
-                          ? _description
-                          : null,
-                      onSubmit: !_busy && !pending ? _submitRecord : null,
-                      error: _activityMode ? _activityParseError : _parseError,
-                    ),
-                    if (!AppNavigationScope.isPresent(context))
-                      const FoodNavigation(),
-                  ],
+                      Expanded(
+                        child: ListView(
+                          key: PageStorageKey((
+                            _activityMode,
+                            saved,
+                            showChat,
+                            showActivityChat,
+                          )),
+                          controller: showActivityChat
+                              ? _activityChatScroll
+                              : showChat
+                              ? _chatScroll
+                              : null,
+                          physics: const BouncingScrollPhysics(
+                            parent: AlwaysScrollableScrollPhysics(),
+                          ),
+                          padding: const EdgeInsets.fromLTRB(22, 12, 22, 18),
+                          children: _activityMode
+                              ? (showActivityChat
+                                    ? _activityInput()
+                                    : _activityReview(_activityDraft!))
+                              : (showChat ? _foodChat() : _review(record!)),
+                        ),
+                      ),
+                      FoodComposer(
+                        activity: _activityMode,
+                        saved: _savedActivity != null,
+                        voiceInput: _voiceInput,
+                        focusNode: _composerFocus,
+                        onToggleInputMode: _toggleInputMode,
+                        voiceStatus: _voiceStatus,
+                        onSpeakStart: _canSpeak ? _startVoiceInput : null,
+                        onSpeakMove: _updateVoiceDrag,
+                        onSpeakEnd: _finishVoiceInput,
+                        onSpeakAction: _canSpeak
+                            ? () => _startVoiceInput(null)
+                            : null,
+                        controller: showActivityChat
+                            ? _activityDescription
+                            : showChat
+                            ? _description
+                            : null,
+                        onSubmit: !_busy && !pending ? _submitRecord : null,
+                        error: _activityMode
+                            ? _activityParseError
+                            : _parseError,
+                      ),
+                      if (!AppNavigationScope.isPresent(context))
+                        const FoodNavigation(),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -708,6 +755,118 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
     } else {
       _composerFocus.requestFocus();
     }
+  }
+
+  void _updateVoiceDrag(PointerEvent event) {
+    final pointer = _voicePointer;
+    if (pointer == null ||
+        pointer.id != event.pointer ||
+        _voiceRelease?.isCompleted != false) {
+      return;
+    }
+    final distanceUp = pointer.downY - event.position.dy;
+    // Let a small movement near the threshold keep the current state.
+    final canceling = distanceUp >= (_cancelVoiceOnRelease ? 48 : 64);
+    if (canceling != _cancelVoiceOnRelease) {
+      setState(() => _cancelVoiceOnRelease = canceling);
+    }
+  }
+
+  void _finishVoiceInput(int? pointer, {required bool transcribe}) {
+    final release = _voiceRelease;
+    if (release == null ||
+        release.isCompleted ||
+        _voicePointer?.id != pointer) {
+      return;
+    }
+    release.complete(transcribe && !_cancelVoiceOnRelease);
+    _voiceOverlay.hide();
+    setState(() => _voiceStatus = VoiceInputStatus.finishing);
+  }
+
+  Future<void> _startVoiceInput(PointerDownEvent? event) async {
+    if (!_canSpeak) return;
+    _resetChatIfNewDay();
+    final release = Completer<bool>();
+    _voiceRelease = release;
+    _voicePointer = event == null
+        ? null
+        : (id: event.pointer, downY: event.position.dy);
+    _voiceLevel.value = 0;
+    final activity = _activityMode;
+    setState(() {
+      _voiceStatus = VoiceInputStatus.opening;
+      _cancelVoiceOnRelease = false;
+      _setComposerError(null, activity: activity);
+    });
+    _voiceOverlay.show();
+    String? transcript;
+    try {
+      transcript = await AppNavigationScope.whileBusy(context, () async {
+        final audio = await widget.recordVoice(
+          release,
+          () {
+            if (mounted && !release.isCompleted) {
+              setState(() => _voiceStatus = VoiceInputStatus.recording);
+            }
+          },
+          (level) {
+            if (mounted && !release.isCompleted) _voiceLevel.value = level;
+          },
+        );
+        if (!mounted || audio == null) return null;
+        // At the time limit, keep the clip local until the user releases.
+        if (!release.isCompleted) {
+          _voiceLevel.value = 0;
+          setState(() => _voiceStatus = VoiceInputStatus.limitReached);
+        }
+        if (!await release.future || !mounted) return null;
+        setState(() => _voiceStatus = VoiceInputStatus.transcribing);
+        return widget.service.transcribeRecord(audio);
+      });
+    } on FoodException catch (error) {
+      if (mounted) {
+        setState(() => _setComposerError(error.message, activity: activity));
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _setComposerError(
+            'Could not record your voice. Try again or switch to typing.',
+            activity: activity,
+          ),
+        );
+      }
+    } finally {
+      _voiceRelease = null;
+      _voicePointer = null;
+      if (mounted) {
+        _voiceOverlay.hide();
+        setState(() => _voiceStatus = null);
+      }
+    }
+    if (!mounted) return;
+    if (transcript != null) {
+      await _reviewTranscript(transcript);
+    } else {
+      _resetChatIfNewDay();
+    }
+  }
+
+  Future<void> _reviewTranscript(String transcript) async {
+    String? error;
+    do {
+      if (!mounted) return;
+      final text = await showCupertinoDialog<String>(
+        context: context,
+        builder: (_) => FoodStyle.theme(
+          _TranscriptDialog(transcript: transcript, error: error),
+        ),
+      );
+      if (!mounted || text == null) return;
+      error = await _submitRecord(transcript: text);
+      transcript = text;
+    } while (error != null);
   }
 
   List<Widget> _activityInput() => [
@@ -1184,6 +1343,80 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
           ),
       ],
     ),
+  );
+}
+
+class _TranscriptDialog extends StatefulWidget {
+  const _TranscriptDialog({required this.transcript, this.error});
+
+  final String transcript;
+  final String? error;
+
+  @override
+  State<_TranscriptDialog> createState() => _TranscriptDialogState();
+}
+
+class _TranscriptDialogState extends State<_TranscriptDialog> {
+  late final _text = TextEditingController(text: widget.transcript);
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => CupertinoAlertDialog(
+    title: const Text('Review transcript'),
+    content: Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          CupertinoTextField(
+            key: const Key('voice-transcript'),
+            controller: _text,
+            placeholder: 'Transcript',
+            minLines: 2,
+            maxLines: 5,
+            maxLength: 2000,
+            textCapitalization: TextCapitalization.sentences,
+            style: const TextStyle(fontSize: 15, color: FoodStyle.ink),
+            decoration: const BoxDecoration(
+              color: FoodStyle.background,
+              borderRadius: BorderRadius.all(Radius.circular(10)),
+            ),
+            padding: const EdgeInsets.all(12),
+          ),
+          if (widget.error case final error?)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                error,
+                style: const TextStyle(color: CupertinoColors.destructiveRed),
+              ),
+            ),
+        ],
+      ),
+    ),
+    actions: [
+      CupertinoDialogAction(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      ValueListenableBuilder(
+        valueListenable: _text,
+        child: const Text('Send'),
+        builder: (context, value, child) {
+          final text = value.text.trim();
+          return CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: text.isEmpty ? null : () => Navigator.pop(context, text),
+            child: child!,
+          );
+        },
+      ),
+    ],
   );
 }
 

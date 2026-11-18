@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -103,6 +104,8 @@ typedef FoodAllergies = ({
 class FoodService {
   const FoodService(this.token, {this.accountEmail});
   static const _allergiesPath = '/api/food-allergies/';
+  static const _parsePath = '/api/food-records/parse/';
+  static const _transcribePath = '/api/food-records/transcribe/';
   final String token;
   final String? accountEmail;
 
@@ -129,7 +132,7 @@ class FoodService {
   }) async {
     final data = await _request(
       'POST',
-      '/api/food-records/parse/',
+      _parsePath,
       token: token,
       data: {
         'text': text,
@@ -170,6 +173,20 @@ class FoodService {
             .map((item) => FoodItem.fromJson(item as Map<String, dynamic>))
             .toList(),
       ),
+    );
+  }
+
+  Future<String> transcribeRecord(Uint8List audio) async {
+    final data = await _request(
+      'POST',
+      _transcribePath,
+      token: token,
+      audio: audio,
+    );
+    final text = data is Map<String, dynamic> ? data['text'] : null;
+    if (text is String && text.trim().isNotEmpty) return text.trim();
+    throw const FoodException(
+      'No speech detected. Hold to speak and try again.',
     );
   }
 
@@ -283,21 +300,38 @@ class FoodService {
     String path, {
     String? token,
     Map<String, Object?>? data,
+    Uint8List? audio,
   }) async {
     try {
       final uri = Uri.parse('${ApiConfig.baseUrl}$path');
       final headers = {
-        'Content-Type': 'application/json',
+        if (audio == null) 'Content-Type': 'application/json',
         if (token != null) 'Authorization': 'Token $token',
       };
-      final future = switch (method) {
-        'GET' => http.get(uri, headers: headers),
-        'POST' => http.post(uri, headers: headers, body: jsonEncode(data)),
-        'PUT' => http.put(uri, headers: headers, body: jsonEncode(data)),
-        'DELETE' => http.delete(uri, headers: headers),
-        _ => throw ArgumentError.value(method),
-      };
-      final response = await future.timeout(const Duration(seconds: 15));
+      final Future<http.Response> future;
+      if (audio != null) {
+        final request = http.MultipartRequest(method, uri)
+          ..headers.addAll(headers)
+          ..files.add(
+            http.MultipartFile.fromBytes(
+              'audio',
+              audio,
+              filename: 'recording.wav',
+            ),
+          );
+        future = request.send().then(http.Response.fromStream);
+      } else {
+        future = switch (method) {
+          'GET' => http.get(uri, headers: headers),
+          'POST' => http.post(uri, headers: headers, body: jsonEncode(data)),
+          'PUT' => http.put(uri, headers: headers, body: jsonEncode(data)),
+          'DELETE' => http.delete(uri, headers: headers),
+          _ => throw ArgumentError.value(method),
+        };
+      }
+      final response = await future.timeout(
+        Duration(seconds: audio == null ? 15 : 35),
+      );
       if (response.statusCode == 204) return null;
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return jsonDecode(response.body);
@@ -309,11 +343,12 @@ class FoodService {
         );
       }
       if (response.statusCode == 404) {
-        throw FoodException(
-          path == _allergiesPath
-              ? 'Could not load allergy settings. Check that the backend is up to date.'
-              : 'This record could not be found. Refresh your history.',
-        );
+        throw FoodException(switch (path) {
+          _allergiesPath => 'Could not load allergy settings. Check that the backend is up to date.',
+          _transcribePath =>
+            'Voice input requires the latest TrackTalk backend.',
+          _ => 'This record could not be found. Refresh your history.',
+        });
       }
       if (response.statusCode == 429) {
         throw const FoodException(
@@ -321,22 +356,27 @@ class FoodService {
         );
       }
       if (response.statusCode == 400 ||
-          (response.statusCode == 503 && path == '/api/food-records/parse/')) {
+          (response.statusCode == 503 &&
+              (path == _parsePath || path == _transcribePath))) {
         final body = jsonDecode(response.body);
         final messages = _messages(body).toList();
         throw FoodException(
           messages.isEmpty ? 'Please check your details.' : messages.join('\n'),
         );
       }
-      throw FoodException(
-        path == _allergiesPath
-            ? 'Could not save or load your allergies. Please try again.'
-            : 'Could not save or load your record. Please try again.',
-      );
+      throw FoodException(switch (path) {
+        _allergiesPath =>
+          'Could not save or load your allergies. Please try again.',
+        _transcribePath =>
+          'Could not transcribe your recording. Please try again.',
+        _ => 'Could not save or load your record. Please try again.',
+      });
     } on TimeoutException {
       throw FoodException(switch (path) {
-        '/api/food-records/parse/' =>
+        _parsePath =>
           'Could not read that record in time. Try again or add it manually.',
+        _transcribePath =>
+          'Transcription timed out. Try again or switch to typing.',
         _allergiesPath => 'Connection timed out. Please try again.',
         _ => 'Connection timed out. Check history before saving again.',
       });

@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart' show kPrimaryButton;
 
 import 'food_style.dart';
 import 'page_back_button.dart';
@@ -298,6 +299,17 @@ class FoodNavigation extends StatelessWidget {
   }
 }
 
+enum VoiceInputStatus {
+  opening('Opening microphone…'),
+  recording('Recording…'),
+  limitReached('Recording limit reached'),
+  finishing('Finishing recording…'),
+  transcribing('Transcribing…');
+
+  const VoiceInputStatus(this.label);
+  final String label;
+}
+
 class FoodComposer extends StatelessWidget {
   const FoodComposer({
     super.key,
@@ -308,6 +320,11 @@ class FoodComposer extends StatelessWidget {
     this.controller,
     this.onToggleInputMode,
     this.onSubmit,
+    this.voiceStatus,
+    this.onSpeakStart,
+    this.onSpeakMove,
+    this.onSpeakEnd,
+    this.onSpeakAction,
     this.error,
   });
 
@@ -318,6 +335,11 @@ class FoodComposer extends StatelessWidget {
   final TextEditingController? controller;
   final VoidCallback? onToggleInputMode;
   final VoidCallback? onSubmit;
+  final VoiceInputStatus? voiceStatus;
+  final ValueChanged<PointerDownEvent>? onSpeakStart;
+  final ValueChanged<PointerEvent>? onSpeakMove;
+  final void Function(int pointer, {required bool transcribe})? onSpeakEnd;
+  final VoidCallback? onSpeakAction;
   final String? error;
 
   static const _inputFontSize = 16.0;
@@ -355,7 +377,7 @@ class FoodComposer extends StatelessWidget {
     final rowHeight = (textSize * 1.2 + 12).clamp(44.0, double.infinity);
     return Semantics(
       label: activity ? 'Activity description input' : 'Food description input',
-      enabled: controller != null && onSubmit != null,
+      enabled: controller != null && (onSubmit != null || voiceStatus != null),
       child: Container(
         margin: const EdgeInsets.fromLTRB(22, 8, 22, 10),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -382,7 +404,7 @@ class FoodComposer extends StatelessWidget {
                     const SizedBox(width: 8),
                   ],
                   Expanded(
-                    child: _showVoiceInput ? _holdToSpeak : _textInput(),
+                    child: _showVoiceInput ? _holdToSpeak() : _textInput(),
                   ),
                   if (!_showVoiceInput) ...[
                     const SizedBox(width: 8),
@@ -432,31 +454,51 @@ class FoodComposer extends StatelessWidget {
     ),
   );
 
-  static final _holdToSpeak = Semantics(
-    button: true,
-    enabled: false,
-    child: const SizedBox.expand(
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: FoodStyle.background,
-          borderRadius: BorderRadius.all(Radius.circular(14)),
-        ),
-        child: Center(
-          child: Text(
-            'Hold to speak',
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: FoodStyle.muted,
-              fontSize: _inputFontSize,
-              fontWeight: FontWeight.w600,
+  Widget _holdToSpeak() {
+    final recording = voiceStatus == VoiceInputStatus.recording;
+    return Semantics(
+      button: true,
+      enabled: onSpeakStart != null || onSpeakAction != null,
+      onTap: onSpeakAction,
+      liveRegion: voiceStatus != null,
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: (event) {
+          if (event.buttons == kPrimaryButton) {
+            onSpeakStart?.call(event);
+          }
+        },
+        onPointerMove: onSpeakMove,
+        onPointerUp: (event) {
+          onSpeakMove?.call(event);
+          onSpeakEnd?.call(event.pointer, transcribe: true);
+        },
+        onPointerCancel: (event) =>
+            onSpeakEnd?.call(event.pointer, transcribe: false),
+        child: SizedBox.expand(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: recording ? FoodStyle.pale : FoodStyle.background,
+              borderRadius: const BorderRadius.all(Radius.circular(14)),
+            ),
+            child: Center(
+              child: Text(
+                voiceStatus?.label ?? 'Hold to speak',
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: recording ? FoodStyle.forest : FoodStyle.muted,
+                  fontSize: _inputFontSize,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 
   Widget _textInput() => controller == null
       ? Text(

@@ -129,3 +129,21 @@ Open **Food → Food allergies** to select from the 14 UK food-labelling
 allergens or enter specific foods. The API filters the listed ingredients
 before choosing a suggestion, including when it uses the preset fallback.
 When every candidate is excluded, the recommendation card shows a message.
+
+## Voice logging
+
+In **+ → Food** or **Activity**, tap the microphone and hold **Hold to speak**.
+Grant microphone access when prompted, then hold again to record. Slide up and
+release to discard the clip, or release near the button to transcribe. Correct
+any words in **Review transcript**, then tap **Send** to see the **Edit / Confirm**
+card. Confirm saves the record.
+
+The app sends up to 30 seconds of audio to Django. Django uses the backend's
+existing OpenAI key to transcribe the clip with `gpt-transcribe` and clean up
+hesitations and obvious repeats. TrackTalk discards the clip after processing.
+
+For accuracy checks, compare the text in **Review transcript** with a cleaned
+reference transcript before editing. Divide the total word insertions, deletions
+and substitutions by the total reference word count. Check food names,
+quantities, units and activity durations in the draft. Reuse the same sample
+recordings when comparing results after prompt changes.
