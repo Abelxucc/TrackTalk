@@ -3,14 +3,25 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:tracktalk/food_editor.dart';
-import 'package:tracktalk/food_amount.dart';
+import 'package:tracktalk/food/food_editor.dart';
+import 'package:tracktalk/food/food_amount.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:tracktalk/food_page.dart';
-import 'package:tracktalk/food_history_page.dart';
-import 'package:tracktalk/food_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:tracktalk/food/food_page.dart';
+import 'package:tracktalk/history/food_history_page.dart';
+import 'package:tracktalk/food/food_service.dart';
+
+// Food-flow tests keep their existing food responses when History also loads activities.
+MockClient foodClient(Future<http.Response> Function(http.Request) handler) =>
+    MockClient((request) async {
+      if (request.method == 'GET' &&
+          request.url.path == '/api/activity-records/') {
+        return http.Response('[]', 200);
+      }
+      return handler(request);
+    });
 
 const stored = {
   'id': 7,
@@ -64,6 +75,222 @@ Future<void> enterDraft(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('food chat waits for a reply and confirms each message once', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    var now = DateTime(2026, 11, 4, 8, 30);
+    final messages = ['Porridge for breakfast', 'Toast yesterday at 12:15'];
+    Future<void> openChat(
+      String token, {
+      String email = 'test@example.com',
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          key: UniqueKey(),
+          home: FoodPage(
+            service: FoodService(token, accountEmail: email),
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    final parseRequests = <String>[];
+    final saves = <Map<String, dynamic>>[];
+    final updates = <Map<String, dynamic>>[];
+    final records = <int, Map<String, dynamic>>{};
+    final client = foodClient((request) async {
+      if (request.method == 'GET') {
+        expect(request.url.path, '/api/food-records/');
+        return http.Response(jsonEncode(records.values.toList()), 200);
+      }
+      final data = jsonDecode(request.body) as Map<String, dynamic>;
+      if (request.url.path == '/api/food-records/parse/') {
+        final text = data['text'] as String;
+        parseRequests.add(text);
+        final breakfast = text == messages.first;
+        return http.Response(
+          jsonEncode({
+            'meal_type': breakfast ? 'breakfast' : 'lunch',
+            'date': breakfast ? '2026-11-04' : '2026-11-03',
+            'time': breakfast ? null : '12:15',
+            'items': [
+              {
+                'name': breakfast ? 'Porridge' : 'Toast',
+                'quantity': '1',
+                'unit': breakfast ? 'bowl' : 'slice',
+              },
+              if (breakfast) {'name': 'Milk', 'quantity': null, 'unit': ''},
+            ],
+          }),
+          200,
+        );
+      }
+      expect(data['time_specified'], isTrue);
+      if (request.method == 'PUT') {
+        expect(request.url.path, '/api/food-records/1/');
+        updates.add(data);
+        records[1] = {...data, 'id': 1};
+        return http.Response(jsonEncode(records[1]), 200);
+      }
+      expect(request.method, 'POST');
+      expect(request.url.path, '/api/food-records/');
+      saves.add(data);
+      final id = saves.length;
+      records[id] = {...data, 'id': id};
+      return http.Response(jsonEncode(records[id]), 201);
+    });
+    await http.runWithClient(() async {
+      await openChat('test-token');
+      const sendKey = Key('parse-food');
+      const confirmKey = Key('confirm-record');
+      const typingKey = Key('food-typing');
+      final composer = find.byKey(const Key('food-description'));
+      final exampleHint = find.text('e.g. I had porridge for breakfast');
+
+      Future<void> send(String message) async {
+        await tester.enterText(composer, message);
+        await tester.pump();
+        expect(exampleHint, findsNothing);
+        await tester.tap(find.byKey(sendKey));
+        await tester.pump();
+        expect(find.text(message), findsOneWidget);
+        expect(find.text('Try an example'), findsNothing);
+        expect(find.byKey(typingKey), findsOneWidget);
+        expect(find.byKey(confirmKey), findsNothing);
+        await tester.pump(const Duration(milliseconds: 900));
+        expect(find.byKey(typingKey), findsOneWidget);
+        expect(find.byKey(confirmKey), findsNothing);
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pumpAndSettle();
+        expect(find.byKey(typingKey), findsNothing);
+        expect(find.byKey(confirmKey), findsOneWidget);
+      }
+
+      expect(exampleHint, findsOneWidget);
+      expect(find.text('Try an example'), findsOneWidget);
+      await send(messages.first);
+      expect(find.text('08:30'), findsOneWidget);
+      expect(find.text('4 Nov 2026 · 08:30'), findsOneWidget);
+      expect(find.text('1 bowl'), findsOneWidget);
+      expect(saves, isEmpty);
+      await tapVisible(tester, find.byKey(const Key('page-back')));
+      await tapVisible(tester, find.text('Keep draft'));
+      await tapVisible(tester, find.byKey(confirmKey));
+      expect(find.text('✓ Saved'), findsOneWidget);
+      expect(find.text('✓ Your breakfast has been saved.'), findsOneWidget);
+      expect(find.text('Milk: amounts not provided.'), findsOneWidget);
+      expect(
+        tester.getTopRight(find.text('✓ Saved')).dx,
+        closeTo(tester.getTopRight(find.text('Add amount')).dx, 0.1),
+        reason: 'Saved and amount labels share a right edge.',
+      );
+      await tapVisible(tester, find.text('Add amount'));
+      expect(find.text('Edit food record'), findsOneWidget);
+      await tapVisible(tester, find.text('Cancel'));
+      expect(exampleHint, findsNothing);
+      expect(find.byKey(confirmKey), findsNothing);
+      expect(saves, hasLength(1));
+      expect(DateTime.parse(saves.first['eaten_at'] as String).toLocal(), now);
+
+      now = DateTime(2026, 11, 4, 12, 40);
+      await send(messages.last);
+      expect(find.text('12:40'), findsOneWidget);
+      expect(find.text('3 Nov 2026 · 12:15'), findsOneWidget);
+
+      final savedBreakfast = find.byKey(const Key('edit-saved-food-1'));
+      await tapVisible(tester, savedBreakfast);
+      expect(find.text('Edit food record'), findsOneWidget);
+      expect(find.text('Porridge'), findsOneWidget);
+      await tester.enterText(find.byKey(const Key('food-amount-0')), '2');
+      await tapVisible(tester, find.text('Save changes'));
+      expect(find.byType(FoodEditor), findsNothing);
+      expect(find.text('2 bowl'), findsOneWidget);
+      expect(find.byKey(confirmKey), findsOneWidget);
+      expect(updates, hasLength(1));
+      expect(saves, hasLength(1));
+
+      await tapVisible(tester, find.text('Edit'));
+      expect(find.text('Edit food record'), findsOneWidget);
+      expect(find.text('Toast'), findsOneWidget);
+      expect(saves, hasLength(1));
+      await tapVisible(tester, find.text('Cancel'));
+      expect(find.byKey(confirmKey), findsOneWidget);
+      expect(saves, hasLength(1));
+
+      await tapVisible(tester, find.text('Edit'));
+      await tester.enterText(find.byKey(const Key('food-amount-0')), '2');
+      expect(find.text('Confirm'), findsOneWidget);
+      await tapVisible(tester, find.byKey(const Key('review-record')));
+      expect(find.byType(FoodEditor), findsNothing);
+      expect(find.text('2 slice'), findsOneWidget);
+      expect(find.byKey(confirmKey), findsNothing);
+      expect(saves, hasLength(2));
+      expect(saves.last['items'], [
+        {'name': 'Toast', 'quantity': '2', 'unit': 'slice'},
+      ]);
+      expect(parseRequests, messages);
+      expect(find.text(messages.first), findsOneWidget);
+      expect(find.text(messages.last), findsOneWidget);
+      expect(find.text('✓ Saved'), findsNWidgets(2));
+      expect(
+        DateTime.parse(saves.last['eaten_at'] as String).toLocal(),
+        DateTime(2026, 11, 3, 12, 15),
+      );
+
+      await openChat('another-account', email: 'other@example.com');
+      expect(find.text('Try an example'), findsOneWidget);
+      expect(find.text('✓ Saved'), findsNothing);
+      await openChat('new-token', email: 'TEST@example.com');
+      expect(find.text(messages.first), findsOneWidget);
+      expect(find.text(messages.last), findsOneWidget);
+      expect(find.text('12:40'), findsOneWidget);
+      expect(find.text('✓ Saved'), findsNWidgets(2));
+      expect(find.text('Try an example'), findsNothing);
+      expect(exampleHint, findsNothing);
+      expect(find.text('2 bowl'), findsOneWidget);
+
+      await tapVisible(tester, find.byKey(const Key('history-saved-food-1')));
+      expect(find.text('2 bowl'), findsOneWidget);
+      expect(find.text('1 record'), findsOneWidget);
+      await tapVisible(tester, find.byKey(const Key('page-back')));
+
+      now = DateTime(2026, 11, 5, 7);
+      await openChat('next-day-token');
+      expect(find.text('Today, 5 November'), findsOneWidget);
+      expect(find.text('Try an example'), findsOneWidget);
+      expect(exampleHint, findsOneWidget);
+      expect(find.text('✓ Saved'), findsNothing);
+      expect(saves, hasLength(2));
+      expect(tester.takeException(), isNull);
+    }, () => client);
+    client.close();
+  });
+
+  testWidgets('food chat starts a new day while the app stays open', (
+    tester,
+  ) async {
+    var now = DateTime(2026, 11, 4, 23, 59, 58);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FoodPage(service: const FoodService('token'), now: () => now),
+      ),
+    );
+    final composer = find.byKey(const Key('food-description'));
+    final hint = find.text('e.g. I had porridge for breakfast');
+    await tester.enterText(composer, 'Unsent food');
+    await tester.pump();
+    expect(hint, findsNothing);
+
+    now = DateTime(2026, 11, 5);
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.text('Today, 5 November'), findsOneWidget);
+    expect(find.text('Unsent food'), findsNothing);
+    expect(hint, findsOneWidget);
+  });
+
   test('amount formatting preserves integer zeroes and missing quantities', () {
     expect(
       const FoodItem(name: 'Rice', quantity: '100', unit: 'g').amount,
@@ -107,7 +334,7 @@ void main() {
     'bare count saves with filled foods and ignores empty extra rows',
     (tester) async {
       final requests = <http.Request>[];
-      final client = MockClient((request) async {
+      final client = foodClient((request) async {
         requests.add(request);
         final data = jsonDecode(request.body) as Map<String, dynamic>;
         expect(data['items'], [
@@ -245,7 +472,7 @@ void main() {
   );
 
   testWidgets(
-    'back from manual input returns without saving and review back keeps the draft',
+    'review back asks before discarding and returns to food input after confirmation',
     (tester) async {
       await tester.pumpWidget(
         const MaterialApp(home: FoodPage(service: FoodService('token'))),
@@ -259,12 +486,16 @@ void main() {
       expect(find.byType(FoodEditor), findsNothing);
       await enterDraft(tester);
       await tapVisible(tester, find.byKey(const Key('page-back')));
-      expect(find.byType(FoodEditor), findsOneWidget);
-      expect(find.text('Porridge'), findsOneWidget);
-      expect(find.text('100'), findsOneWidget);
-      await tapVisible(tester, find.byKey(const Key('page-back')));
+      expect(find.text('Discard this draft?'), findsOneWidget);
+      expect(find.byType(FoodEditor), findsNothing);
+      await tapVisible(tester, find.text('Keep draft'));
       expect(find.byKey(const Key('confirm-record')), findsOneWidget);
       expect(find.text('Porridge'), findsOneWidget);
+      await tapVisible(tester, find.byKey(const Key('page-back')));
+      await tapVisible(tester, find.text('Discard'));
+      expect(find.byKey(const Key('food-description')), findsOneWidget);
+      expect(find.byKey(const Key('confirm-record')), findsNothing);
+      expect(find.byType(FoodEditor), findsNothing);
     },
   );
 
@@ -289,7 +520,7 @@ void main() {
     (tester) async {
       final requests = <http.Request>[];
       Map<String, dynamic>? savedRecord;
-      final client = MockClient((request) async {
+      final client = foodClient((request) async {
         requests.add(request);
         expect(request.headers['Authorization'], 'Token example-token');
         if (request.method == 'POST') {
@@ -416,7 +647,7 @@ void main() {
       final methods = <String>[];
       Map<String, dynamic>? record;
       var expectedTime = DateTime(2026, 10, 31, 12, 45);
-      final client = MockClient((request) async {
+      final client = foodClient((request) async {
         methods.add(request.method);
         if (request.method == 'POST' || request.method == 'PUT') {
           final data = jsonDecode(request.body) as Map<String, dynamic>;
@@ -502,7 +733,7 @@ void main() {
     tester,
   ) async {
     Map<String, dynamic>? saved;
-    final client = MockClient((request) async {
+    final client = foodClient((request) async {
       if (request.method == 'POST') {
         saved = {...jsonDecode(request.body) as Map<String, dynamic>, 'id': 7};
         expect(saved!['time_specified'], false);
@@ -577,7 +808,7 @@ void main() {
       meal(4, 'snack', 10, 'Timed snack'),
       meal(5, 'breakfast', 8, 'Morning meal'),
     ];
-    final client = MockClient((request) async {
+    final client = foodClient((request) async {
       if (request.method == 'PUT') {
         records[3] = {
           ...jsonDecode(request.body) as Map<String, dynamic>,
@@ -641,7 +872,7 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       const longName = 'Blueberries with banana and unsweetened yoghurt';
-      final client = MockClient(
+      final client = foodClient(
         (_) async => http.Response(
           jsonEncode([
             {
@@ -690,7 +921,7 @@ void main() {
 
   testWidgets('failed save preserves draft and supports retry', (tester) async {
     var calls = 0;
-    final client = MockClient((request) async {
+    final client = foodClient((request) async {
       calls++;
       return calls == 1
           ? http.Response('unavailable', 503)
@@ -778,7 +1009,7 @@ void main() {
   ) async {
     final methods = <String>[];
     Map<String, dynamic> record = Map.of(stored);
-    final client = MockClient((request) async {
+    final client = foodClient((request) async {
       methods.add(request.method);
       if (request.method == 'PUT') {
         expect(request.url.path, '/api/food-records/7/');
@@ -821,7 +1052,7 @@ void main() {
       final pending = Completer<http.Response>();
       var saves = 0;
       Map<String, dynamic> record = Map.of(stored);
-      final client = MockClient((request) async {
+      final client = foodClient((request) async {
         if (request.method == 'PUT') {
           saves++;
           final data = jsonDecode(request.body) as Map<String, dynamic>;
@@ -882,7 +1113,7 @@ void main() {
     tester,
   ) async {
     var deletes = 0;
-    final client = MockClient((request) async {
+    final client = foodClient((request) async {
       if (request.method == 'DELETE') {
         deletes++;
         return http.Response('', 204);
@@ -908,7 +1139,7 @@ void main() {
         find.widgetWithText(CupertinoDialogAction, 'Delete'),
       );
       expect(deletes, 1);
-      expect(find.text('No food records for this day.'), findsOneWidget);
+      expect(find.text('No records for this day.'), findsOneWidget);
     }, () => client);
     client.close();
   });
@@ -920,7 +1151,7 @@ void main() {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
-      final client = MockClient(
+      final client = foodClient(
         (_) async => http.Response(
           jsonEncode([
             stored,
@@ -978,7 +1209,7 @@ void main() {
     tester,
   ) async {
     final methods = <String>[];
-    final client = MockClient((request) async {
+    final client = foodClient((request) async {
       methods.add(request.method);
       return http.Response(jsonEncode([stored]), 200);
     });
@@ -1006,7 +1237,7 @@ void main() {
   testWidgets(
     'manual form has no History shortcut and back returns to Add record',
     (tester) async {
-      final client = MockClient((_) async => http.Response('[]', 200));
+      final client = foodClient((_) async => http.Response('[]', 200));
       await http.runWithClient(() async {
         await tester.pumpWidget(
           const MaterialApp(home: FoodPage(service: FoodService('token'))),
@@ -1026,7 +1257,7 @@ void main() {
   );
 
   testWidgets('standalone history back opens Add record', (tester) async {
-    final client = MockClient((_) async => http.Response('[]', 200));
+    final client = foodClient((_) async => http.Response('[]', 200));
     await http.runWithClient(() async {
       await tester.pumpWidget(
         const MaterialApp(home: FoodHistoryPage(service: FoodService('token'))),
@@ -1044,7 +1275,7 @@ void main() {
   testWidgets('history failure offers retry without claiming diary is empty', (
     tester,
   ) async {
-    final client = MockClient((_) async => http.Response('offline', 503));
+    final client = foodClient((_) async => http.Response('offline', 503));
     await http.runWithClient(() async {
       await tester.pumpWidget(
         MaterialApp(

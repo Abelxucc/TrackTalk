@@ -1,18 +1,25 @@
-import 'package:flutter/cupertino.dart';
+import 'dart:async';
 
-import 'LoginPage.dart';
-import 'app_navigation_scope.dart';
-import 'food_chrome.dart';
-import 'food_page.dart';
-import 'food_service.dart';
-import 'food_style.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart' show DateUtils;
+
+import 'auth/LoginPage.dart';
+import 'HomePage.dart';
+import 'history/food_history_page.dart';
+import 'shared/app_navigation_scope.dart';
+import 'shared/food_chrome.dart';
+import 'food/food_diary_page.dart';
+import 'food/food_page.dart';
+import 'food/food_service.dart';
+import 'shared/food_style.dart';
 import 'me_page.dart';
 
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, required this.service});
+  const AppShell({super.key, required this.service, this.now = DateTime.now});
 
   static const routeName = '/app';
   final FoodService service;
+  final DateTime Function() now;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -20,12 +27,44 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   final _foodNavigator = GlobalKey<NavigatorState>();
-  FoodDestination _selected = FoodDestination.add;
+  FoodDestination _selected = FoodDestination.home;
+  late DateTime _today;
+  late final AppLifecycleListener _lifecycle;
+  Timer? _midnight;
   int _pendingWrites = 0;
   bool _signingOut = false;
   String? _error;
 
   bool get _busy => _signingOut || _pendingWrites > 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = widget.now();
+    _today = DateUtils.dateOnly(now);
+    _lifecycle = AppLifecycleListener(onResume: _updateToday);
+    _scheduleMidnight(now);
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    _midnight?.cancel();
+    super.dispose();
+  }
+
+  void _updateToday() {
+    final now = widget.now();
+    final today = DateUtils.dateOnly(now);
+    if (today != _today) setState(() => _today = today);
+    _scheduleMidnight(now);
+  }
+
+  void _scheduleMidnight(DateTime now) {
+    _midnight?.cancel();
+    final midnight = DateTime(now.year, now.month, now.day + 1);
+    _midnight = Timer(midnight.difference(now), _updateToday);
+  }
 
   void _busyChanged(bool busy) {
     if (!mounted) return;
@@ -66,6 +105,21 @@ class _AppShellState extends State<AppShell> {
     builder: (_) => FoodPage(service: widget.service),
   );
 
+  Future<void> _openHistory(DateTime date, HistoryFilter filter) =>
+      Navigator.of(context).push<void>(
+        CupertinoPageRoute(
+          builder: (routeContext) => FoodHistoryPage(
+            service: widget.service,
+            initialDate: date,
+            initialFilter: filter,
+            onDestinationSelected: (destination) {
+              Navigator.of(routeContext).pop();
+              _select(destination);
+            },
+          ),
+        ),
+      );
+
   @override
   Widget build(BuildContext context) => FoodStyle.theme(
     PopScope(
@@ -92,13 +146,19 @@ class _AppShellState extends State<AppShell> {
                       child: IndexedStack(
                         index: _selected.index,
                         children: [
-                          const _ComingSoonPage(
-                            title: 'Home',
-                            icon: CupertinoIcons.house,
+                          HomePage(
+                            service: widget.service,
+                            today: _today,
+                            active: _selected == FoodDestination.home,
+                            openHistory: _openHistory,
                           ),
-                          const _ComingSoonPage(
-                            title: 'Food',
-                            icon: CupertinoIcons.leaf_arrow_circlepath,
+                          FoodDiaryPage(
+                            service: widget.service,
+                            today: _today,
+                            active: _selected == FoodDestination.food,
+                            openHistory: (date) =>
+                                _openHistory(date, HistoryFilter.food),
+                            addFood: () => _select(FoodDestination.add),
                           ),
                           ExcludeFocus(
                             excluding: _selected != FoodDestination.add,

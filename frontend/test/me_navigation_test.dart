@@ -1,17 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:tracktalk/LoginPage.dart';
+import 'package:tracktalk/auth/LoginPage.dart';
 import 'package:tracktalk/app_shell.dart';
-import 'package:tracktalk/food_chrome.dart';
-import 'package:tracktalk/food_editor.dart';
-import 'package:tracktalk/food_history_page.dart';
-import 'package:tracktalk/food_page.dart';
-import 'package:tracktalk/food_service.dart';
+import 'package:tracktalk/shared/food_chrome.dart';
+import 'package:tracktalk/food/food_editor.dart';
+import 'package:tracktalk/history/food_history_page.dart';
+import 'package:tracktalk/food/food_page.dart';
+import 'package:tracktalk/food/food_service.dart';
 
 Future<void> tap(WidgetTester tester, Finder finder) async {
   await tester.ensureVisible(finder);
@@ -32,6 +33,242 @@ void phone(WidgetTester tester, {Size size = const Size(390, 844)}) {
 const app = MaterialApp(home: AppShell(service: FoodService('test-token')));
 
 void main() {
+  testWidgets('Food uses meal rows and a separate recommendation card', (
+    tester,
+  ) async {
+    phone(tester);
+    final client = MockClient((request) async {
+      if (request.url.path == '/api/food-recommendations/') {
+        expect(request.headers['authorization'], 'Token test-token');
+        return http.Response(
+          jsonEncode({
+            'week_start': '2026-11-02',
+            'week_end': '2026-11-08',
+            'days_logged': 1,
+            'groups': [
+              {
+                'label': 'Protein foods',
+                'foods': ['Chicken'],
+              },
+            ],
+            'recommendation': {
+              'title': 'No pulses logged in the last 7 days',
+              'body': 'Try lentils in soup.',
+              'source_url': 'https://www.nhs.uk/',
+            },
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/api/food-records/') {
+        final now = DateTime.now();
+        return http.Response(
+          jsonEncode([
+            for (final (id, type, hour, name) in [
+              (1, 'breakfast', 8, 'Porridge'),
+              (2, 'lunch', 12, 'Chicken sandwich'),
+              (3, 'snack', 15, 'Yoghurt'),
+            ])
+              {
+                'id': id,
+                'meal_type': type,
+                'eaten_at': DateTime(
+                  now.year,
+                  now.month,
+                  now.day,
+                  hour,
+                ).toIso8601String(),
+                'items': [
+                  {'name': name, 'quantity': null, 'unit': ''},
+                ],
+              },
+          ]),
+          200,
+        );
+      }
+      return http.Response('[]', 200);
+    });
+    await http.runWithClient(() async {
+      await tester.pumpWidget(app);
+      await tester.pumpAndSettle();
+      expect(find.text('Try lentils in soup.'), findsOneWidget);
+      await tap(tester, find.byKey(const Key('nav-food')));
+      expect(find.text('Your food diary'), findsOneWidget);
+      expect(find.text('3 food records'), findsOneWidget);
+      expect(find.text('2 meals · 1 snack'), findsOneWidget);
+      expect(find.text('Meals & snacks'), findsOneWidget);
+      expect(find.text('Porridge'), findsOneWidget);
+      expect(find.text('Chicken sandwich'), findsOneWidget);
+      expect(find.text('Yoghurt'), findsOneWidget);
+      expect(find.text('Food allergies'), findsOneWidget);
+      expect(find.byType(PageView), findsNothing);
+      expect(find.text('Try lentils in soup.'), findsNothing);
+      await tap(tester, find.text('View this week'));
+      expect(find.text('Chicken'), findsOneWidget);
+      expect(find.text('Pulses'), findsOneWidget);
+      expect(find.text('Not logged'), findsOneWidget);
+      expect(find.text('Try lentils in soup.'), findsOneWidget);
+    }, () => client);
+  });
+
+  testWidgets(
+    'Food allergies save selections and refresh both recommendations',
+    (tester) async {
+      phone(tester);
+      final settings = <String, dynamic>{
+        'options': [
+          {'id': 'milk', 'label': 'Milk'},
+          {
+            'id': 'gluten_cereals',
+            'label': 'Gluten cereals (e.g. wheat, oats)',
+          },
+        ],
+        'allergen_ids': <String>[],
+        'other_foods': <String>[],
+      };
+      const originalTip = 'Try plain cooked chickpeas for variety.';
+      const noMatch = 'No food ideas match your allergy settings.';
+      var saves = 0;
+      final client = MockClient((request) async {
+        switch (request.url.path) {
+          case '/api/food-allergies/':
+            expect(request.headers['authorization'], 'Token test-token');
+            if (request.method == 'PUT') {
+              final data = jsonDecode(request.body) as Map<String, dynamic>;
+              expect(data['allergen_ids'], ['gluten_cereals']);
+              saves++;
+              if (saves == 1) return http.Response('', 503);
+              settings.addAll(data);
+            }
+            return http.Response(jsonEncode(settings), 200);
+          case '/api/food-recommendations/':
+            final excludesChickpeas = (settings['other_foods'] as List)
+                .contains('Chickpeas');
+            return http.Response(
+              jsonEncode({
+                'week_start': '2026-11-09',
+                'week_end': '2026-11-15',
+                'days_logged': 1,
+                'groups': [],
+                'recommendation': excludesChickpeas
+                    ? null
+                    : {
+                        'title': 'No pulses logged in the last 7 days',
+                        'body': originalTip,
+                        'source_url': 'https://www.nhs.uk/',
+                      },
+                'recommendation_message': excludesChickpeas ? noMatch : null,
+              }),
+              200,
+            );
+          default:
+            return http.Response('[]', 200);
+        }
+      });
+      await http.runWithClient(() async {
+        await tester.pumpWidget(app);
+        await tester.pumpAndSettle();
+        expect(find.text(originalTip), findsOneWidget);
+        await tap(tester, find.byKey(const Key('nav-food')));
+        await tap(tester, find.text('This week'));
+        expect(find.text(originalTip), findsOneWidget);
+
+        final allergies = find.byKey(const Key('food-allergies'));
+        final gluten = find.byKey(const Key('allergen-gluten_cereals'));
+        final customFood = find.byKey(const Key('other-allergen-name'));
+        final save = find.byKey(const Key('save-food-allergies'));
+        await tap(tester, allergies);
+        expect(find.text('Common allergens'), findsOneWidget);
+        await tap(tester, gluten);
+        await tester.enterText(customFood, 'Chickpeas');
+        await tap(tester, find.byKey(const Key('add-other-allergen')));
+        await tester.enterText(customFood, 'Kiwi');
+        await tap(tester, save);
+        expect(
+          find.text('Could not save or load your allergies. Please try again.'),
+          findsOneWidget,
+        );
+        expect(find.text('Chickpeas'), findsOneWidget);
+        expect(find.text('Kiwi'), findsOneWidget);
+
+        await tap(tester, save);
+        expect(saves, 2);
+        expect(settings['other_foods'], ['Chickpeas', 'Kiwi']);
+        expect(find.text(noMatch), findsOneWidget);
+        expect(find.text(originalTip), findsNothing);
+        await tap(tester, find.byKey(const Key('nav-home')));
+        expect(find.text(noMatch), findsOneWidget);
+        expect(find.text(originalTip), findsNothing);
+
+        await tap(tester, find.byKey(const Key('nav-food')));
+        await tap(tester, allergies);
+        expect(find.text('Kiwi'), findsOneWidget);
+        expect(
+          find.descendant(
+            of: gluten,
+            matching: find.byIcon(CupertinoIcons.check_mark_circled_solid),
+          ),
+          findsOneWidget,
+        );
+        await tap(tester, find.byKey(const Key('remove-allergen-Chickpeas')));
+        await tap(tester, save);
+        expect(settings['other_foods'], ['Kiwi']);
+        expect(find.text(originalTip), findsOneWidget);
+      }, () => client);
+    },
+  );
+
+  testWidgets(
+    'Recommendations follow the selected day and advance at midnight',
+    (tester) async {
+      phone(tester);
+      var now = DateTime(2026, 7, 8, 23, 59, 50);
+      final requestedDates = <String>[];
+      final client = MockClient((request) async {
+        if (request.url.path != '/api/food-recommendations/') {
+          return http.Response('[]', 200);
+        }
+        requestedDates.add(request.url.queryParameters['date']!);
+        return http.Response(
+          jsonEncode({
+            'week_start': '2026-07-06',
+            'week_end': '2026-07-12',
+            'days_logged': 0,
+            'groups': [],
+            'recommendation': null,
+          }),
+          200,
+        );
+      });
+      await http.runWithClient(() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: AppShell(
+              service: const FoodService('test-token'),
+              now: () => now,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(requestedDates, ['2026-07-08']);
+        await tap(tester, find.text('7'));
+        expect(requestedDates.last, '2026-07-07');
+        await tap(tester, find.text('8'));
+        expect(requestedDates.last, '2026-07-08');
+
+        await tap(tester, find.byKey(const Key('nav-food')));
+        await tap(tester, find.text('This week'));
+        expect(requestedDates.last, '2026-07-08');
+
+        now = DateTime(2026, 7, 9);
+        await tester.pump(const Duration(seconds: 10));
+        await tester.pumpAndSettle();
+        expect(requestedDates.last, '2026-07-09');
+        expect(find.text('Based on the 7 days ending 9 July'), findsOneWidget);
+      }, () => client);
+    },
+  );
+
   testWidgets(
     'Me has placeholder cards and selection animates across the bar',
     (tester) async {
@@ -62,10 +299,12 @@ void main() {
       await tester.tap(find.text('Edit my profile'));
       await tester.pumpAndSettle();
       expect(find.text('Coming soon'), findsNWidgets(3));
-      for (final name in ['home', 'food', 'activity']) {
-        await tap(tester, find.byKey(Key('nav-$name')));
-        expect(find.text('Coming soon'), findsOneWidget);
-      }
+      await tap(tester, find.byKey(const Key('nav-home')));
+      expect(find.text('Today'), findsOneWidget);
+      await tap(tester, find.byKey(const Key('nav-food')));
+      expect(find.text('This week'), findsOneWidget);
+      await tap(tester, find.byKey(const Key('nav-activity')));
+      expect(find.text('Coming soon'), findsOneWidget);
       await tap(tester, find.byKey(const Key('nav-add')));
       expect(find.text('Add record'), findsOneWidget);
       expect(tester.takeException(), isNull);
@@ -77,6 +316,7 @@ void main() {
   ) async {
     phone(tester);
     await tester.pumpWidget(app);
+    await tap(tester, find.byKey(const Key('nav-add')));
     await tap(tester, find.byKey(const Key('add-manually')));
     await tester.enterText(find.byKey(const Key('food-name-0')), 'Porridge');
     await tester.enterText(find.byKey(const Key('food-amount-0')), '1');
@@ -103,6 +343,7 @@ void main() {
       final client = MockClient((_) async => http.Response('[]', 200));
       await http.runWithClient(() async {
         await tester.pumpWidget(app);
+        await tap(tester, find.byKey(const Key('nav-add')));
         await tap(tester, find.text('History'));
         await tap(tester, find.byKey(const Key('history-filter-activity')));
         await openMe(tester);
@@ -136,6 +377,7 @@ void main() {
       });
       await http.runWithClient(() async {
         await tester.pumpWidget(app);
+        await tap(tester, find.byKey(const Key('nav-add')));
         await tap(tester, find.text('History'));
       }, () => MockClient((_) async => http.Response('[]', 200)));
       await http.runWithClient(() async {
@@ -179,9 +421,10 @@ void main() {
   ) async {
     phone(tester);
     var calls = 0;
-    final client = MockClient(
-      (_) async => http.Response('', ++calls == 1 ? 503 : 204),
-    );
+    final client = MockClient((request) async {
+      if (request.method == 'GET') return http.Response('', 503);
+      return http.Response('', ++calls == 1 ? 503 : 204);
+    });
     await http.runWithClient(() async {
       await tester.pumpWidget(app);
       await openMe(tester);
@@ -218,12 +461,14 @@ void main() {
       phone(tester);
       final response = Completer<http.Response>();
       Map<String, dynamic>? draft;
-      final client = MockClient((request) {
+      final client = MockClient((request) async {
+        if (request.method == 'GET') return http.Response('', 503);
         draft = jsonDecode(request.body) as Map<String, dynamic>;
         return response.future;
       });
       await http.runWithClient(() async {
         await tester.pumpWidget(app);
+        await tap(tester, find.byKey(const Key('nav-add')));
         await tap(tester, find.byKey(const Key('add-manually')));
         await tester.enterText(
           find.byKey(const Key('food-name-0')),

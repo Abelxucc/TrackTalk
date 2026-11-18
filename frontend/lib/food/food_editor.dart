@@ -1,17 +1,24 @@
 import 'package:flutter/cupertino.dart';
 
 import 'food_amount.dart';
-import 'app_navigation_scope.dart';
+import '../shared/app_navigation_scope.dart';
 import 'food_amount_input.dart';
-import 'food_chrome.dart';
+import '../shared/food_chrome.dart';
 import 'food_service.dart';
-import 'food_style.dart';
+import '../shared/food_style.dart';
 
 class FoodEditor extends StatefulWidget {
-  const FoodEditor({super.key, this.initialDraft, this.service, this.onSave});
+  const FoodEditor({
+    super.key,
+    this.initialDraft,
+    this.service,
+    this.onSave,
+    this.submitLabel,
+  });
   final FoodDraft? initialDraft;
   final FoodService? service;
   final Future<void> Function(FoodDraft)? onSave;
+  final String? submitLabel;
   @override
   State<FoodEditor> createState() => _FoodEditorState();
 }
@@ -48,7 +55,8 @@ class _FoodEditorState extends State<FoodEditor> {
   @override
   void initState() {
     super.initState();
-    _meal = widget.initialDraft?.mealType;
+    final meal = widget.initialDraft?.mealType;
+    _meal = FoodStyle.meals.containsKey(meal) ? meal : null;
     _eatenAt = widget.initialDraft?.eatenAt ?? DateTime.now();
     _timeSpecified = widget.initialDraft?.timeSpecified ?? false;
     _items =
@@ -439,11 +447,12 @@ class _FoodEditorState extends State<FoodEditor> {
                                                 color: CupertinoColors.white,
                                               )
                                             : Text(
-                                                _editing
-                                                    ? 'Save changes'
-                                                    : _hasName
-                                                    ? 'Review record'
-                                                    : 'Continue',
+                                                widget.submitLabel ??
+                                                    (_editing
+                                                        ? 'Save changes'
+                                                        : _hasName
+                                                        ? 'Review record'
+                                                        : 'Continue'),
                                                 style: const TextStyle(
                                                   fontSize: 14,
                                                   fontWeight: FontWeight.w600,
