@@ -18,6 +18,21 @@ class ActivityEditor extends StatefulWidget {
   final Future<void> Function(ActivityDraft)? onSave;
   final String? submitLabel;
 
+  static Future<ActivityDraft?> editRecord(
+    BuildContext context, {
+    required ActivityRecord record,
+    required FoodService service,
+  }) => Navigator.of(context).push<ActivityDraft>(
+    CupertinoPageRoute(
+      builder: (_) => ActivityEditor(
+        initialDraft: record,
+        onSave: (draft) async {
+          await service.saveActivity(draft, id: record.id);
+        },
+      ),
+    ),
+  );
+
   @override
   State<ActivityEditor> createState() => _ActivityEditorState();
 }

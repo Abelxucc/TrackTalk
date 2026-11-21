@@ -3,16 +3,18 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart' show DateUtils;
 
-import 'auth/LoginPage.dart';
 import 'HomePage.dart';
-import 'history/food_history_page.dart';
-import 'shared/app_navigation_scope.dart';
-import 'shared/food_chrome.dart';
+import 'activity/activity_diary_page.dart';
+import 'activity/activity_editor.dart';
+import 'auth/LoginPage.dart';
 import 'food/food_diary_page.dart';
 import 'food/food_page.dart';
 import 'food/food_service.dart';
-import 'shared/food_style.dart';
+import 'history/food_history_page.dart';
 import 'me_page.dart';
+import 'shared/app_navigation_scope.dart';
+import 'shared/food_chrome.dart';
+import 'shared/food_style.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key, required this.service, this.now = DateTime.now});
@@ -27,6 +29,7 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   final _foodNavigator = GlobalKey<NavigatorState>();
+  final _recordPage = GlobalKey<FoodPageState>();
   FoodDestination _selected = FoodDestination.home;
   late DateTime _today;
   late final AppLifecycleListener _lifecycle;
@@ -102,8 +105,16 @@ class _AppShellState extends State<AppShell> {
 
   Route<void> _foodRoute(RouteSettings settings) => CupertinoPageRoute<void>(
     settings: settings,
-    builder: (_) => FoodPage(service: widget.service),
+    builder: (_) =>
+        FoodPage(key: _recordPage, service: widget.service, now: widget.now),
   );
+
+  void _logActivity() {
+    if (_busy) return;
+    // Use the existing composer so both chat drafts stay in place.
+    _recordPage.currentState?.showActivity();
+    _select(FoodDestination.add);
+  }
 
   Future<void> _openHistory(DateTime date, HistoryFilter filter) =>
       Navigator.of(context).push<void>(
@@ -179,9 +190,18 @@ class _AppShellState extends State<AppShell> {
                               ),
                             ),
                           ),
-                          const _ComingSoonPage(
-                            title: 'Activity',
-                            icon: CupertinoIcons.sportscourt,
+                          ActivityDiaryPage(
+                            service: widget.service,
+                            today: _today,
+                            active: _selected == FoodDestination.activity,
+                            openHistory: (date) =>
+                                _openHistory(date, HistoryFilter.activity),
+                            openRecord: (record) => ActivityEditor.editRecord(
+                              context,
+                              record: record,
+                              service: widget.service,
+                            ),
+                            logActivity: _logActivity,
                           ),
                           MePage(
                             onSignOut: _signOut,
@@ -205,37 +225,5 @@ class _AppShellState extends State<AppShell> {
         ),
       ),
     ),
-  );
-}
-
-class _ComingSoonPage extends StatelessWidget {
-  const _ComingSoonPage({required this.title, required this.icon});
-  final String title;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(22, 18, 22, 0),
-        child: Text(title, style: const TextStyle(fontSize: 24)),
-      ),
-      Expanded(
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 40, color: FoodStyle.forest),
-              const SizedBox(height: 16),
-              const Text(
-                'Coming soon',
-                style: TextStyle(fontSize: 18, color: FoodStyle.muted),
-              ),
-            ],
-          ),
-        ),
-      ),
-    ],
   );
 }

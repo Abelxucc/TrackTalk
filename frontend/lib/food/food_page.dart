@@ -34,10 +34,10 @@ class FoodPage extends StatefulWidget {
   final DateTime Function() now;
   final VoiceCapture recordVoice;
   @override
-  State<FoodPage> createState() => _FoodPageState();
+  FoodPageState createState() => FoodPageState();
 }
 
-class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
+class FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
   final _description = TextEditingController();
   final _composerFocus = FocusNode();
   final _chatScroll = ScrollController();
@@ -741,6 +741,8 @@ class _FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
       ),
     );
   }
+
+  void showActivity() => _selectMode(true);
 
   void _selectMode(bool activity) {
     if (_activityMode == activity) return;

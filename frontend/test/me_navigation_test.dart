@@ -304,7 +304,7 @@ void main() {
       await tap(tester, find.byKey(const Key('nav-food')));
       expect(find.text('This week'), findsOneWidget);
       await tap(tester, find.byKey(const Key('nav-activity')));
-      expect(find.text('Coming soon'), findsOneWidget);
+      expect(find.byKey(const Key('activity-diary-week')), findsOneWidget);
       await tap(tester, find.byKey(const Key('nav-add')));
       expect(find.text('Add record'), findsOneWidget);
       expect(tester.takeException(), isNull);

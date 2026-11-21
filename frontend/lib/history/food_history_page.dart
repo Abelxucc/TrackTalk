@@ -110,15 +110,10 @@ class _FoodHistoryPageState extends State<FoodHistoryPage> {
   }
 
   Future<void> _editActivity(ActivityRecord record) async {
-    final updated = await Navigator.of(context).push<ActivityDraft>(
-      CupertinoPageRoute(
-        builder: (_) => ActivityEditor(
-          initialDraft: record,
-          onSave: (draft) async {
-            await widget.service.saveActivity(draft, id: record.id);
-          },
-        ),
-      ),
+    final updated = await ActivityEditor.editRecord(
+      context,
+      record: record,
+      service: widget.service,
     );
     if (mounted && updated != null) await _load();
   }
