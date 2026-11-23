@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import '../activity/activity_record.dart';
+import '../registration/profile_details.dart';
 import '../shared/api_config.dart';
 
 class FoodException implements Exception {
@@ -104,6 +105,7 @@ typedef FoodAllergies = ({
 class FoodService {
   const FoodService(this.token, {this.accountEmail});
   static const _allergiesPath = '/api/food-allergies/';
+  static const _profilePath = '/api/auth/profile/';
   static const _parsePath = '/api/food-records/parse/';
   static const _transcribePath = '/api/food-records/transcribe/';
   final String token;
@@ -246,6 +248,21 @@ class FoodService {
     );
   }
 
+  Future<AccountProfile> profile() async {
+    final data = await _request('GET', _profilePath, token: token);
+    return AccountProfile.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<AccountProfile> saveProfile(Map<String, Object?> changes) async {
+    final data = await _request(
+      'PATCH',
+      _profilePath,
+      token: token,
+      data: changes,
+    );
+    return AccountProfile.fromJson(data as Map<String, dynamic>);
+  }
+
   static String _dateOnly(DateTime value) =>
       value.toIso8601String().split('T').first;
 
@@ -325,6 +342,7 @@ class FoodService {
           'GET' => http.get(uri, headers: headers),
           'POST' => http.post(uri, headers: headers, body: jsonEncode(data)),
           'PUT' => http.put(uri, headers: headers, body: jsonEncode(data)),
+          'PATCH' => http.patch(uri, headers: headers, body: jsonEncode(data)),
           'DELETE' => http.delete(uri, headers: headers),
           _ => throw ArgumentError.value(method),
         };
@@ -345,6 +363,8 @@ class FoodService {
       if (response.statusCode == 404) {
         throw FoodException(switch (path) {
           _allergiesPath => 'Could not load allergy settings. Check that the backend is up to date.',
+          _profilePath =>
+            'Profile editing requires the latest TrackTalk backend.',
           _transcribePath =>
             'Voice input requires the latest TrackTalk backend.',
           _ => 'This record could not be found. Refresh your history.',
@@ -356,6 +376,7 @@ class FoodService {
         );
       }
       if (response.statusCode == 400 ||
+          (response.statusCode == 409 && path == _profilePath) ||
           (response.statusCode == 503 &&
               (path == _parsePath || path == _transcribePath))) {
         final body = jsonDecode(response.body);
@@ -367,6 +388,8 @@ class FoodService {
       throw FoodException(switch (path) {
         _allergiesPath =>
           'Could not save or load your allergies. Please try again.',
+        _profilePath =>
+          'Could not ${method == 'GET' ? 'load' : 'save'} your profile. Please try again.',
         _transcribePath =>
           'Could not transcribe your recording. Please try again.',
         _ => 'Could not save or load your record. Please try again.',
@@ -378,6 +401,7 @@ class FoodService {
         _transcribePath =>
           'Transcription timed out. Try again or switch to typing.',
         _allergiesPath => 'Connection timed out. Please try again.',
+        _profilePath => 'Connection timed out. Please try again.',
         _ => 'Connection timed out. Check history before saving again.',
       });
     } on http.ClientException {

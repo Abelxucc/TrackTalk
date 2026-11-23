@@ -3,6 +3,7 @@ import 'package:flutter/material.dart' show DateUtils;
 import 'package:flutter/services.dart';
 
 import '../history/food_history_order.dart';
+import '../shared/diary_header.dart';
 import '../shared/food_style.dart';
 import 'food_allergies_page.dart';
 import 'food_service.dart';
@@ -111,28 +112,17 @@ class _FoodDiaryPageState extends State<FoodDiaryPage> {
   Widget build(BuildContext context) => TickerMode(
     enabled: widget.active,
     child: ListView(
-      padding: const EdgeInsets.fromLTRB(16, 17, 16, 16),
+      padding: DiaryHeader.pagePadding,
       children: [
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                'Food',
-                style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700),
-              ),
-            ),
-            _textButton('History', _history),
-          ],
+        DiaryHeader(
+          kind: DiaryKind.food,
+          showWeek: _showWeek,
+          date: _showWeek ? _weekStart : _day,
+          today: widget.today,
+          onSelectView: _selectView,
+          onChangeDate: _changeDate,
+          onHistory: _history,
         ),
-        const Text(
-          'Your food diary',
-          style: TextStyle(fontSize: 14, color: _muted),
-        ),
-        const SizedBox(height: 16),
-        _segmentedControl(),
-        const SizedBox(height: 12),
-        _dateControl(),
-        const SizedBox(height: 12),
         if (_showWeek) _weeklyView() else _dailyView(),
         const SizedBox(height: 12),
         _allergiesCard(),
@@ -140,92 +130,6 @@ class _FoodDiaryPageState extends State<FoodDiaryPage> {
       ],
     ),
   );
-
-  Widget _segmentedControl() => _panel(
-    radius: 15,
-    padding: const EdgeInsets.all(4),
-    color: FoodStyle.pale,
-    child: Row(
-      children: [
-        for (final (weekly, label) in [(false, 'Today'), (true, 'This week')])
-          Expanded(
-            child: Semantics(
-              selected: weekly == _showWeek,
-              child: CupertinoButton(
-                color: weekly == _showWeek ? CupertinoColors.white : null,
-                borderRadius: BorderRadius.circular(12),
-                padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 4),
-                minimumSize: const Size(0, 35),
-                onPressed: () => _selectView(weekly),
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: weekly == _showWeek ? _deep : _muted,
-                  ),
-                ),
-              ),
-            ),
-          ),
-      ],
-    ),
-  );
-
-  Widget _dateControl() {
-    final today = widget.today;
-    final end = _offset(_weekStart, 6);
-    final dateLabel = _showWeek
-        ? _weekStart.month == end.month
-              ? '${_weekStart.day}–${FoodStyle.today(end)}'
-              : '${FoodStyle.today(_weekStart)} – ${FoodStyle.today(end)}'
-        : '${_day == today ? 'Today, ' : ''}${FoodStyle.today(_day)}';
-    final canGoForward = _showWeek
-        ? _weekStart.isBefore(_monday(today))
-        : _day.isBefore(today);
-    final period = _showWeek ? 'week' : 'day';
-    return _panel(
-      radius: 15,
-      padding: EdgeInsets.zero,
-      color: FoodStyle.pale,
-      child: Row(
-        children: [
-          _dateArrow(
-            'Previous $period',
-            CupertinoIcons.chevron_left,
-            () => _changeDate(-1),
-          ),
-          Expanded(
-            child: Text(
-              dateLabel,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-            ),
-          ),
-          _dateArrow(
-            'Next $period',
-            CupertinoIcons.chevron_right,
-            canGoForward ? () => _changeDate(1) : null,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _dateArrow(String label, IconData icon, VoidCallback? onPressed) =>
-      Semantics(
-        label: label,
-        child: CupertinoButton(
-          padding: EdgeInsets.zero,
-          minimumSize: const Size(44, 42),
-          onPressed: onPressed,
-          child: Icon(
-            icon,
-            size: 17,
-            color: onPressed == null ? FoodStyle.muted : FoodStyle.forest,
-          ),
-        ),
-      );
 
   Widget _dailyView() => FutureBuilder<List<FoodRecord>?>(
     future: _records,

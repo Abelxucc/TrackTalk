@@ -294,11 +294,11 @@ void main() {
       expect(find.text('Edit my profile'), findsOneWidget);
       expect(find.text('Settings'), findsOneWidget);
       expect(find.text('About us'), findsOneWidget);
-      expect(find.text('Coming soon'), findsNWidgets(3));
+      expect(find.text('Coming soon'), findsNWidgets(2));
       expect(find.text('Sign out'), findsOneWidget);
-      await tester.tap(find.text('Edit my profile'));
+      await tester.tap(find.text('Settings'));
       await tester.pumpAndSettle();
-      expect(find.text('Coming soon'), findsNWidgets(3));
+      expect(find.text('Coming soon'), findsNWidgets(2));
       await tap(tester, find.byKey(const Key('nav-home')));
       expect(find.text('Today'), findsOneWidget);
       await tap(tester, find.byKey(const Key('nav-food')));

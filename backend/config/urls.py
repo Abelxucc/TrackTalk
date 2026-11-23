@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.urls import path
 
+from tracker.account_profile import account_profile
 from tracker.food_allergies import food_allergies
 from tracker.food_ai import food_week, parse_food_record
 from tracker.registration import register_account, validate_registration
@@ -13,6 +14,7 @@ from tracker.password_reset import request_password_reset
 urlpatterns = [
     path("api/auth/login/", sign_in, name="sign_in"),
     path("api/auth/logout/", sign_out, name="sign_out"),
+    path("api/auth/profile/", account_profile, name="account_profile"),
     path("api/auth/register/", register_account, name="register_account"),
     path("api/auth/register/validate/", validate_registration, name="validate_registration"),
     path("api/auth/password-reset/", request_password_reset, name="password_reset_request"),

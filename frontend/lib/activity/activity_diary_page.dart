@@ -5,6 +5,7 @@ import 'package:flutter/material.dart' show DateUtils, Icons;
 
 import '../food/food_service.dart';
 import '../history/food_history_order.dart';
+import '../shared/diary_header.dart';
 import '../shared/food_style.dart';
 import 'activity_record.dart';
 
@@ -102,35 +103,17 @@ class _ActivityDiaryPageState extends State<ActivityDiaryPage> {
   Widget build(BuildContext context) => TickerMode(
     enabled: widget.active,
     child: ListView(
-      padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
+      padding: DiaryHeader.pagePadding,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Semantics(
-                header: true,
-                child: const Text(
-                  'Activity',
-                  style: TextStyle(fontSize: 27, fontWeight: FontWeight.w700),
-                ),
-              ),
-            ),
-            CupertinoButton(
-              key: const Key('activity-diary-history'),
-              padding: const EdgeInsets.only(left: 12),
-              onPressed: () => _refreshAfter(widget.openHistory(_day)),
-              child: const Text(
-                'History',
-                style: TextStyle(color: _forest, fontSize: 15),
-              ),
-            ),
-          ],
+        DiaryHeader(
+          kind: DiaryKind.activity,
+          showWeek: _showWeek,
+          date: _showWeek ? _weekStart : _day,
+          today: _today,
+          onSelectView: (weekly) => setState(() => _showWeek = weekly),
+          onChangeDate: _shiftPeriod,
+          onHistory: () => _refreshAfter(widget.openHistory(_day)),
         ),
-        const SizedBox(height: 9),
-        _periodControl(),
-        const SizedBox(height: 5),
-        _dateControl(),
-        const SizedBox(height: 8),
         FutureBuilder<List<ActivityRecord>>(
           future: _records,
           builder: (context, snapshot) {
@@ -190,112 +173,6 @@ class _ActivityDiaryPageState extends State<ActivityDiaryPage> {
           ),
         ),
       ],
-    ),
-  );
-
-  Widget _periodControl() => Container(
-    padding: const EdgeInsets.all(4),
-    decoration: BoxDecoration(
-      color: FoodStyle.pale,
-      borderRadius: BorderRadius.circular(16),
-    ),
-    child: Row(
-      children: [
-        for (final (weekly, title, key) in [
-          (false, 'Today', 'activity-diary-today'),
-          (true, 'This week', 'activity-diary-week'),
-        ])
-          Expanded(
-            child: Semantics(
-              selected: weekly == _showWeek,
-              child: CupertinoButton(
-                key: Key(key),
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                minimumSize: const Size(0, 38),
-                borderRadius: BorderRadius.circular(12),
-                color: weekly == _showWeek ? FoodStyle.surface : null,
-                onPressed: () => setState(() => _showWeek = weekly),
-                child: Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: weekly == _showWeek ? _forest : _muted,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-          ),
-      ],
-    ),
-  );
-
-  Widget _dateControl() {
-    final end = DateUtils.addDaysToDate(_weekStart, 6);
-    final canGoForward = _showWeek
-        ? _weekStart.isBefore(_monday(_today))
-        : _day.isBefore(_today);
-    final period = _showWeek ? 'week' : 'day';
-    return Row(
-      children: [
-        _dateArrow(
-          const Key('activity-previous-period'),
-          'Previous $period',
-          CupertinoIcons.chevron_left,
-          () => _shiftPeriod(-1),
-        ),
-        Expanded(
-          child: Text(
-            _periodTitle(end),
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
-          ),
-        ),
-        _dateArrow(
-          const Key('activity-next-period'),
-          'Next $period',
-          CupertinoIcons.chevron_right,
-          canGoForward ? () => _shiftPeriod(1) : null,
-        ),
-      ],
-    );
-  }
-
-  String _periodTitle(DateTime end) {
-    if (!_showWeek) {
-      if (_day == _today) return 'Today, ${FoodStyle.today(_day)}';
-      return _day.year == _today.year
-          ? FoodStyle.today(_day)
-          : FoodStyle.date(_day);
-    }
-    final start = _weekStart;
-    if (start.year != end.year) {
-      return '${FoodStyle.date(start)} – ${FoodStyle.date(end)}';
-    }
-    final range = start.month == end.month
-        ? '${start.day}–${FoodStyle.today(end)}'
-        : '${FoodStyle.today(start)} – ${FoodStyle.today(end)}';
-    return end.year == _today.year ? range : '$range ${end.year}';
-  }
-
-  Widget _dateArrow(
-    Key key,
-    String label,
-    IconData icon,
-    VoidCallback? onPressed,
-  ) => Semantics(
-    label: label,
-    child: CupertinoButton(
-      key: key,
-      padding: EdgeInsets.zero,
-      minimumSize: const Size(44, 44),
-      onPressed: onPressed,
-      child: Icon(
-        icon,
-        size: 18,
-        color: onPressed == null ? const Color(0xFFA9B6A5) : _forest,
-      ),
     ),
   );
 

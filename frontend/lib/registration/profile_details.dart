@@ -29,3 +29,29 @@ class ProfileDetails {
     'age': age,
   };
 }
+
+class AccountProfile {
+  const AccountProfile({
+    required this.gender,
+    required this.heightCm,
+    required this.weightKg,
+    required this.age,
+    required this.phoneNumber,
+  });
+
+  final ProfileGender? gender;
+  final String? heightCm;
+  final String? weightKg;
+  final int? age;
+  final String phoneNumber;
+
+  factory AccountProfile.fromJson(Map<String, dynamic> json) => AccountProfile(
+    gender: ProfileGender.values
+        .where((gender) => gender.value == json['gender'])
+        .firstOrNull,
+    heightCm: json['height_cm']?.toString(),
+    weightKg: json['weight_kg']?.toString(),
+    age: json['age'] as int?,
+    phoneNumber: json['phone_number'] as String? ?? '',
+  );
+}

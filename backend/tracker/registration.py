@@ -1,6 +1,5 @@
 """Create accounts and their profile in one transaction."""
 
-import re
 import uuid
 
 from django.contrib.auth import get_user_model
@@ -20,6 +19,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 
+from .account_profile import ProfileFieldsSerializer
 from .models import AccountProfile
 
 
@@ -33,30 +33,12 @@ class RegistrationValidationThrottle(AnonRateThrottle):
     rate = "10/min"
 
 
-class RegistrationSerializer(serializers.Serializer):
+class RegistrationSerializer(ProfileFieldsSerializer):
     email = serializers.EmailField(max_length=254)
     confirm_email = serializers.EmailField(max_length=254, write_only=True)
     password = serializers.CharField(
         write_only=True, trim_whitespace=False, max_length=4096
     )
-    phone_number = serializers.CharField(max_length=40, allow_blank=True, default="")
-    gender = serializers.ChoiceField(choices=AccountProfile.Gender.choices, required=False)
-    height_cm = serializers.DecimalField(max_digits=5, decimal_places=2,
-        min_value=30, max_value=300, required=False)
-    weight_kg = serializers.DecimalField(max_digits=5, decimal_places=2,
-        min_value=1, max_value=500, required=False)
-    age = serializers.IntegerField(min_value=1, max_value=120, required=False)
-
-    def validate_phone_number(self, value):
-        if not value:
-            return ""
-        # Accept readable formatting, but store only a leading + and digits.
-        if not re.fullmatch(r"[+0-9 ()\-.]+", value):
-            raise serializers.ValidationError("Enter a valid phone number.")
-        normalized = re.sub(r"[ ()\-.]", "", value)
-        if not re.fullmatch(r"\+?[0-9]{7,15}", normalized):
-            raise serializers.ValidationError("Use 7 to 15 digits, with an optional country code.")
-        return normalized
 
     def validate(self, attrs):
         profile_fields = ("gender", "height_cm", "weight_kg", "age")

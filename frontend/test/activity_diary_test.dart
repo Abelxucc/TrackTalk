@@ -7,6 +7,7 @@ import 'package:http/testing.dart';
 import 'package:tracktalk/app_shell.dart';
 import 'package:tracktalk/food/food_service.dart';
 import 'package:tracktalk/history/food_history_page.dart';
+import 'package:tracktalk/shared/diary_header.dart';
 
 Finder _key(String value) => find.byKey(Key(value));
 
@@ -107,6 +108,56 @@ class _ActivityBackend {
 }
 
 void main() {
+  testWidgets('Food and Activity align their diary headers', (tester) async {
+    final client = _ActivityBackend().client();
+    addTearDown(client.close);
+
+    Map<String, Object?> headerLayout(
+      String diary,
+      String subtitle,
+      String dateLabel,
+    ) {
+      Finder headerText(String text) => find.descendant(
+        of: find.byType(DiaryHeader),
+        matching: find.text(text),
+      );
+      final title = headerText(diary);
+      final subtitleText = headerText(subtitle);
+      final date = headerText(dateLabel);
+      final prefix = diary.toLowerCase();
+      return {
+        'title position': tester.getTopLeft(title),
+        'title style': tester.widget<Text>(title).style,
+        'subtitle position': tester.getTopLeft(subtitleText),
+        'subtitle style': tester.widget<Text>(subtitleText).style,
+        'History button': tester.getRect(_key('$prefix-diary-history')),
+        'History style': tester.widget<Text>(headerText('History')).style,
+        'Today tab': tester.getRect(_key('$prefix-diary-today')),
+        'This week tab': tester.getRect(_key('$prefix-diary-week')),
+        'date position': tester.getCenter(date),
+        'date style': tester.widget<Text>(date).style,
+        'previous arrow': tester.getRect(_key('$prefix-previous-period')),
+        'next arrow': tester.getRect(_key('$prefix-next-period')),
+      };
+    }
+
+    await http.runWithClient(() async {
+      await _openDiary(tester);
+      final activity = headerLayout(
+        'Activity',
+        'Your activity diary',
+        '16–22 November',
+      );
+
+      await _tap(tester, _key('nav-food'));
+      expect(
+        headerLayout('Food', 'Your food diary', 'Today, 18 November'),
+        activity,
+      );
+      expect(tester.takeException(), isNull);
+    }, () => client);
+  });
+
   testWidgets(
     'Activity selects dated records in both diary views and History',
     (tester) async {

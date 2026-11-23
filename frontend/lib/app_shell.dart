@@ -12,6 +12,7 @@ import 'food/food_page.dart';
 import 'food/food_service.dart';
 import 'history/food_history_page.dart';
 import 'me_page.dart';
+import 'profile/edit_profile_page.dart';
 import 'shared/app_navigation_scope.dart';
 import 'shared/food_chrome.dart';
 import 'shared/food_style.dart';
@@ -116,6 +117,15 @@ class _AppShellState extends State<AppShell> {
     _select(FoodDestination.add);
   }
 
+  void _openProfile() {
+    if (_busy) return;
+    Navigator.of(context).push<void>(
+      CupertinoPageRoute(
+        builder: (_) => EditProfilePage(service: widget.service),
+      ),
+    );
+  }
+
   Future<void> _openHistory(DateTime date, HistoryFilter filter) =>
       Navigator.of(context).push<void>(
         CupertinoPageRoute(
@@ -204,6 +214,7 @@ class _AppShellState extends State<AppShell> {
                             logActivity: _logActivity,
                           ),
                           MePage(
+                            onEditProfile: _openProfile,
                             onSignOut: _signOut,
                             signingOut: _signingOut,
                             error: _error,
