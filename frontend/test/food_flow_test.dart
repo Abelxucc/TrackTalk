@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
@@ -12,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tracktalk/food/food_page.dart';
 import 'package:tracktalk/history/food_history_page.dart';
 import 'package:tracktalk/food/food_service.dart';
+import 'package:tracktalk/shared/food_chrome.dart' show FoodComposer;
 
 // Food-flow tests keep their existing food responses when History also loads activities.
 MockClient foodClient(Future<http.Response> Function(http.Request) handler) =>
@@ -75,6 +77,264 @@ Future<void> enterDraft(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('switches to voice and restores the keyboard and typed drafts', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      const MaterialApp(home: FoodPage(service: FoodService('test-token'))),
+    );
+
+    final toggle = find.byKey(const Key('toggle-input-mode'));
+    final food = find.byKey(const Key('food-description'));
+    final activity = find.byKey(const Key('activity-description'));
+    final voice = find.text('Hold to speak');
+    final composer = find.byType(FoodComposer);
+    final send = find.byKey(const Key('parse-food'));
+    const foodText = 'Porridge for breakfast';
+    const activityText = 'I walked for 20 minutes.';
+
+    expect(find.byIcon(CupertinoIcons.mic), findsOneWidget);
+    expect(find.text('e.g. I had porridge for breakfast'), findsNothing);
+    final typingSize = tester.getSize(composer);
+    final typingToggle = tester.getCenter(toggle);
+    expect(tester.getRect(toggle).right, lessThan(tester.getRect(food).left));
+    expect(tester.getRect(food).right, lessThan(tester.getRect(send).left));
+    expect(tester.getCenter(food).dy, closeTo(typingToggle.dy, 0.5));
+    expect(tester.getCenter(send).dy, closeTo(typingToggle.dy, 0.5));
+
+    await tester.enterText(food, foodText);
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isTrue);
+    await tapVisible(tester, toggle);
+    expect(voice, findsOneWidget);
+    expect(food, findsNothing);
+    expect(find.byIcon(CupertinoIcons.keyboard), findsOneWidget);
+    expect(tester.testTextInput.isVisible, isFalse);
+    expect(tester.getSize(composer), typingSize);
+    expect(tester.getCenter(toggle), typingToggle);
+
+    await tapVisible(tester, find.byKey(const Key('record-mode-activity')));
+    expect(voice, findsOneWidget);
+    await tapVisible(tester, toggle);
+    expect(voice, findsNothing);
+    expect(tester.testTextInput.isVisible, isTrue);
+    expect(tester.getSize(composer), typingSize);
+    await tester.enterText(activity, activityText);
+    await tapVisible(tester, toggle);
+
+    await tapVisible(tester, find.byKey(const Key('record-mode-food')));
+    await tapVisible(tester, toggle);
+    expect(tester.widget<CupertinoTextField>(food).controller!.text, foodText);
+    expect(tester.testTextInput.isVisible, isTrue);
+    await tapVisible(tester, find.byKey(const Key('record-mode-activity')));
+    expect(
+      tester.widget<CupertinoTextField>(activity).controller!.text,
+      activityText,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final activity in [false, true]) {
+    final kind = activity ? 'activity' : 'food';
+    testWidgets('reviews voice text before creating a $kind draft', (
+      tester,
+    ) async {
+      final requests = <String>[];
+      final reply = Completer<http.Response>();
+      final transcript = activity
+          ? 'I walked for 30 minutes.'
+          : 'I had a banana for breakfast.';
+      final corrected = activity
+          ? 'I walked for 35 minutes.'
+          : 'I had two bananas for breakfast.';
+      const parseError = 'Could not read that record. Try again.';
+      final client = MockClient((request) async {
+        requests.add(request.url.path);
+        expect(request.headers['authorization'], 'Token test-token');
+        switch (request.url.path) {
+          case '/api/food-records/transcribe/':
+            expect(
+              request.headers['content-type'],
+              startsWith('multipart/form-data; boundary='),
+            );
+            expect(
+              request.body,
+              contains('name="audio"; filename="recording.wav"'),
+            );
+            return reply.future;
+          case '/api/food-records/parse/':
+            final input = jsonDecode(request.body);
+            expect(input['text'], corrected);
+            expect(input['mode'], kind);
+            if (activity && requests.length == 2) {
+              return http.Response(jsonEncode({'detail': parseError}), 503);
+            }
+            return http.Response(
+              jsonEncode({
+                'date': '2026-11-18',
+                'time': null,
+                if (activity) ...{
+                  'kind': 'activity',
+                  'activity_name': 'Walking',
+                  'duration_minutes': 35,
+                } else ...{
+                  'meal_type': 'breakfast',
+                  'items': [
+                    {'name': 'Banana', 'quantity': '2.00', 'unit': 'items'},
+                  ],
+                },
+              }),
+              200,
+            );
+          default:
+            fail('Unexpected request to ${request.url.path}');
+        }
+      });
+      await http.runWithClient(() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: FoodPage(
+              service: const FoodService('test-token'),
+              startWithActivity: activity,
+              now: () => DateTime(2026, 11, 18, 9),
+              recordVoice: (release, started, onLevel) async {
+                started();
+                onLevel(.65);
+                return await release.future ? Uint8List(10) : null;
+              },
+            ),
+          ),
+        );
+        final typed = find.byKey(Key('$kind-description'));
+        final toggle = find.byKey(const Key('toggle-input-mode'));
+        final confirm = find.byKey(
+          Key(activity ? 'confirm-activity' : 'confirm-record'),
+        );
+        final field = find.byKey(const Key('voice-transcript'));
+        await tester.enterText(typed, 'Unsent typed draft');
+        await tapVisible(tester, toggle);
+        final voice = find.text('Hold to speak');
+        final canceled = await tester.startGesture(tester.getCenter(voice));
+        await tester.pump();
+        expect(find.text('Recording…'), findsOneWidget);
+        await canceled.cancel();
+        await tester.pumpAndSettle();
+        expect(requests, isEmpty);
+
+        final swipe = await tester.startGesture(tester.getCenter(voice));
+        await tester.pumpAndSettle();
+        expect(find.text('Release to transcribe'), findsOneWidget);
+        expect(find.text('Slide up to cancel'), findsOneWidget);
+        await swipe.moveBy(const Offset(0, -90));
+        await tester.pumpAndSettle();
+        expect(find.text('Release to cancel'), findsOneWidget);
+        await swipe.up();
+        await tester.pumpAndSettle();
+        expect(find.text('Release to cancel'), findsNothing);
+        expect(find.text('Review transcript'), findsNothing);
+        expect(voice, findsOneWidget);
+        expect(requests, isEmpty);
+
+        final hold = await tester.startGesture(tester.getCenter(voice));
+        await tester.pumpAndSettle();
+        await hold.moveBy(const Offset(0, -90));
+        await tester.pumpAndSettle();
+        expect(find.text('Release to cancel'), findsOneWidget);
+        await hold.moveBy(const Offset(0, 70));
+        await tester.pumpAndSettle();
+        expect(find.text('Release to transcribe'), findsOneWidget);
+        expect(requests, isEmpty);
+        await hold.up();
+        await tester.pumpAndSettle();
+        expect(find.text('Transcribing…'), findsOneWidget);
+        expect(requests, ['/api/food-records/transcribe/']);
+
+        reply.complete(http.Response(jsonEncode({'text': transcript}), 200));
+        await tester.pumpAndSettle();
+        expect(find.text('Review transcript'), findsOneWidget);
+        expect(
+          tester.widget<CupertinoTextField>(field).controller!.text,
+          transcript,
+        );
+        expect(confirm, findsNothing);
+        expect(requests, hasLength(1));
+
+        await tester.enterText(field, corrected);
+        await tapVisible(tester, find.text('Send'));
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pumpAndSettle();
+        if (activity) {
+          expect(confirm, findsNothing);
+          expect(find.text('Review transcript'), findsOneWidget);
+          expect(find.text(parseError).hitTestable(), findsOneWidget);
+          expect(
+            tester.widget<CupertinoTextField>(field).controller!.text,
+            corrected,
+          );
+          await tapVisible(tester, find.text('Send'));
+          await tester.pump(const Duration(seconds: 1));
+          await tester.pumpAndSettle();
+        }
+        expect(find.text(corrected), findsOneWidget);
+        expect(confirm, findsOneWidget);
+        expect(find.text('Edit'), findsOneWidget);
+        expect(requests, [
+          '/api/food-records/transcribe/',
+          '/api/food-records/parse/',
+          if (activity) '/api/food-records/parse/',
+        ]);
+        final composer = tester.widget<FoodComposer>(find.byType(FoodComposer));
+        expect(composer.controller!.text, 'Unsent typed draft');
+        expect(tester.takeException(), isNull);
+      }, () => client);
+    });
+  }
+
+  testWidgets('a held clip can still be canceled at the recording limit', (
+    tester,
+  ) async {
+    final limit = Completer<void>();
+    final client = MockClient((request) async {
+      fail('A canceled clip must not be uploaded to ${request.url.path}');
+    });
+    await http.runWithClient(() async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FoodPage(
+            service: const FoodService('test-token'),
+            recordVoice: (release, started, _) async {
+              started();
+              await limit.future;
+              return Uint8List(10);
+            },
+          ),
+        ),
+      );
+      await tapVisible(tester, find.byKey(const Key('toggle-input-mode')));
+      final voice = find.text('Hold to speak');
+      final hold = await tester.startGesture(tester.getCenter(voice));
+      await tester.pumpAndSettle();
+      limit.complete();
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Release to transcribe or slide up to cancel'),
+        findsOneWidget,
+      );
+      await hold.moveBy(const Offset(0, -90));
+      await tester.pumpAndSettle();
+      expect(find.text('Release to cancel'), findsOneWidget);
+      await hold.up();
+      await tester.pumpAndSettle();
+      expect(voice, findsOneWidget);
+      expect(find.text('Review transcript'), findsNothing);
+      expect(tester.takeException(), isNull);
+    }, () => client);
+  });
+
   testWidgets('food chat waits for a reply and confirms each message once', (
     tester,
   ) async {
@@ -148,12 +408,10 @@ void main() {
       const confirmKey = Key('confirm-record');
       const typingKey = Key('food-typing');
       final composer = find.byKey(const Key('food-description'));
-      final exampleHint = find.text('e.g. I had porridge for breakfast');
 
       Future<void> send(String message) async {
         await tester.enterText(composer, message);
         await tester.pump();
-        expect(exampleHint, findsNothing);
         await tester.tap(find.byKey(sendKey));
         await tester.pump();
         expect(find.text(message), findsOneWidget);
@@ -169,7 +427,6 @@ void main() {
         expect(find.byKey(confirmKey), findsOneWidget);
       }
 
-      expect(exampleHint, findsOneWidget);
       expect(find.text('Try an example'), findsOneWidget);
       await send(messages.first);
       expect(find.text('08:30'), findsOneWidget);
@@ -190,7 +447,6 @@ void main() {
       await tapVisible(tester, find.text('Add amount'));
       expect(find.text('Edit food record'), findsOneWidget);
       await tapVisible(tester, find.text('Cancel'));
-      expect(exampleHint, findsNothing);
       expect(find.byKey(confirmKey), findsNothing);
       expect(saves, hasLength(1));
       expect(DateTime.parse(saves.first['eaten_at'] as String).toLocal(), now);
@@ -249,7 +505,6 @@ void main() {
       expect(find.text('12:40'), findsOneWidget);
       expect(find.text('✓ Saved'), findsNWidgets(2));
       expect(find.text('Try an example'), findsNothing);
-      expect(exampleHint, findsNothing);
       expect(find.text('2 bowl'), findsOneWidget);
 
       await tapVisible(tester, find.byKey(const Key('history-saved-food-1')));
@@ -261,7 +516,6 @@ void main() {
       await openChat('next-day-token');
       expect(find.text('Today, 5 November'), findsOneWidget);
       expect(find.text('Try an example'), findsOneWidget);
-      expect(exampleHint, findsOneWidget);
       expect(find.text('✓ Saved'), findsNothing);
       expect(saves, hasLength(2));
       expect(tester.takeException(), isNull);
@@ -279,16 +533,15 @@ void main() {
       ),
     );
     final composer = find.byKey(const Key('food-description'));
-    final hint = find.text('e.g. I had porridge for breakfast');
     await tester.enterText(composer, 'Unsent food');
     await tester.pump();
-    expect(hint, findsNothing);
+    expect(find.text('Unsent food'), findsOneWidget);
 
     now = DateTime(2026, 11, 5);
     await tester.pump(const Duration(seconds: 2));
     expect(find.text('Today, 5 November'), findsOneWidget);
     expect(find.text('Unsent food'), findsNothing);
-    expect(hint, findsOneWidget);
+    expect(find.text('Type what you ate...'), findsOneWidget);
   });
 
   test('amount formatting preserves integer zeroes and missing quantities', () {

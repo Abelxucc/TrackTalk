@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart' show kPrimaryButton;
 
 import 'food_style.dart';
 import 'page_back_button.dart';
@@ -298,138 +299,239 @@ class FoodNavigation extends StatelessWidget {
   }
 }
 
+enum VoiceInputStatus {
+  opening('Opening microphone…'),
+  recording('Recording…'),
+  limitReached('Recording limit reached'),
+  finishing('Finishing recording…'),
+  transcribing('Transcribing…');
+
+  const VoiceInputStatus(this.label);
+  final String label;
+}
+
 class FoodComposer extends StatelessWidget {
   const FoodComposer({
     super.key,
     this.activity = false,
     this.saved = false,
-    this.showExample = true,
+    this.voiceInput = false,
+    this.focusNode,
     this.controller,
+    this.onToggleInputMode,
     this.onSubmit,
+    this.voiceStatus,
+    this.onSpeakStart,
+    this.onSpeakMove,
+    this.onSpeakEnd,
+    this.onSpeakAction,
     this.error,
   });
 
   final bool activity;
   final bool saved;
-  final bool showExample;
+  final bool voiceInput;
+  final FocusNode? focusNode;
   final TextEditingController? controller;
+  final VoidCallback? onToggleInputMode;
   final VoidCallback? onSubmit;
+  final VoiceInputStatus? voiceStatus;
+  final ValueChanged<PointerDownEvent>? onSpeakStart;
+  final ValueChanged<PointerEvent>? onSpeakMove;
+  final void Function(int pointer, {required bool transcribe})? onSpeakEnd;
+  final VoidCallback? onSpeakAction;
   final String? error;
 
-  @override
-  Widget build(BuildContext context) => Semantics(
-    label: activity ? 'Activity description input' : 'Food description input',
-    enabled: controller != null && onSubmit != null,
-    child: Container(
-      margin: const EdgeInsets.fromLTRB(22, 8, 22, 10),
-      padding: const EdgeInsets.fromLTRB(18, 16, 14, 14),
+  static const _inputFontSize = 16.0;
+  static const _placeholderStyle = TextStyle(
+    fontSize: _inputFontSize,
+    color: FoodStyle.muted,
+  );
+  static const _sendIcon = SizedBox.square(
+    dimension: 36,
+    child: DecoratedBox(
       decoration: BoxDecoration(
-        color: FoodStyle.surface,
-        borderRadius: BorderRadius.circular(26),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0C263D2D),
-            blurRadius: 24,
-            offset: Offset(0, 6),
-          ),
-        ],
+        shape: BoxShape.circle,
+        color: FoodStyle.forest,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (controller == null)
-            Text(
-              activity
-                  ? (saved ? 'Add another detail...' : 'Type what you did...')
-                  : 'Type what you ate...',
-              style: const TextStyle(fontSize: 17, color: FoodStyle.muted),
-            )
-          else
-            CupertinoTextField(
-              key: Key(activity ? 'activity-description' : 'food-description'),
-              controller: controller,
-              enabled: onSubmit != null,
-              placeholder: activity
-                  ? 'Type what you did...'
-                  : 'Type what you ate...',
-              decoration: null,
-              padding: EdgeInsets.zero,
-              maxLength: 2000,
-              textInputAction: TextInputAction.send,
-              onSubmitted: (_) => onSubmit?.call(),
+      child: Icon(
+        CupertinoIcons.arrow_up,
+        size: 25,
+        color: CupertinoColors.white,
+      ),
+    ),
+  );
+
+  bool get _showVoiceInput => voiceInput && controller != null;
+
+  String get _placeholder {
+    if (!activity) return 'Type what you ate...';
+    return saved && controller == null
+        ? 'Add another detail...'
+        : 'Type what you did...';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textSize = MediaQuery.textScalerOf(context).scale(_inputFontSize);
+    final rowHeight = (textSize * 1.2 + 12).clamp(44.0, double.infinity);
+    return Semantics(
+      label: activity ? 'Activity description input' : 'Food description input',
+      enabled: controller != null && (onSubmit != null || voiceStatus != null),
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(22, 8, 22, 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: FoodStyle.surface,
+          borderRadius: BorderRadius.circular(26),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x0C263D2D),
+              blurRadius: 24,
+              offset: Offset(0, 6),
             ),
-          if (error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              height: rowHeight,
+              child: Row(
+                children: [
+                  if (controller != null && onToggleInputMode != null) ...[
+                    _inputModeButton(),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(
+                    child: _showVoiceInput ? _holdToSpeak() : _textInput(),
+                  ),
+                  if (!_showVoiceInput) ...[
+                    const SizedBox(width: 8),
+                    if (controller == null) _sendIcon else _sendButton(),
+                  ],
+                ],
+              ),
+            ),
+            if (error case final message?)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
+                child: Text(
+                  message,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: CupertinoColors.destructiveRed,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _inputModeButton() => CupertinoButton(
+    key: const Key('toggle-input-mode'),
+    padding: EdgeInsets.zero,
+    minimumSize: const Size(44, 44),
+    onPressed: onSubmit != null ? onToggleInputMode : null,
+    child: DecoratedBox(
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        color: FoodStyle.pale,
+      ),
+      child: SizedBox.square(
+        dimension: 36,
+        child: Icon(
+          _showVoiceInput ? CupertinoIcons.keyboard : CupertinoIcons.mic,
+          color: FoodStyle.forest,
+          size: 19,
+          semanticLabel: _showVoiceInput
+              ? 'Switch to typing'
+              : 'Switch to voice input',
+        ),
+      ),
+    ),
+  );
+
+  Widget _holdToSpeak() {
+    final recording = voiceStatus == VoiceInputStatus.recording;
+    return Semantics(
+      button: true,
+      enabled: onSpeakStart != null || onSpeakAction != null,
+      onTap: onSpeakAction,
+      liveRegion: voiceStatus != null,
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: (event) {
+          if (event.buttons == kPrimaryButton) {
+            onSpeakStart?.call(event);
+          }
+        },
+        onPointerMove: onSpeakMove,
+        onPointerUp: (event) {
+          onSpeakMove?.call(event);
+          onSpeakEnd?.call(event.pointer, transcribe: true);
+        },
+        onPointerCancel: (event) =>
+            onSpeakEnd?.call(event.pointer, transcribe: false),
+        child: SizedBox.expand(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: recording ? FoodStyle.pale : FoodStyle.background,
+              borderRadius: const BorderRadius.all(Radius.circular(14)),
+            ),
+            child: Center(
               child: Text(
-                error!,
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: CupertinoColors.destructiveRed,
+                voiceStatus?.label ?? 'Hold to speak',
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: recording ? FoodStyle.forest : FoodStyle.muted,
+                  fontSize: _inputFontSize,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              if (showExample)
-                Expanded(
-                  child: Text(
-                    activity
-                        ? 'e.g. I went jogging for 30 minutes'
-                        : 'e.g. I had porridge for breakfast',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: FoodStyle.muted,
-                    ),
-                  ),
-                ),
-              if (controller == null)
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: FoodStyle.forest,
-                  ),
-                  child: const Icon(
-                    CupertinoIcons.arrow_up,
-                    size: 25,
-                    color: CupertinoColors.white,
-                  ),
-                )
-              else
-                ValueListenableBuilder<TextEditingValue>(
-                  valueListenable: controller!,
-                  builder: (context, value, _) => CupertinoButton(
-                    key: Key(activity ? 'parse-activity' : 'parse-food'),
-                    padding: EdgeInsets.zero,
-                    minimumSize: const Size(44, 44),
-                    onPressed: value.text.trim().isEmpty ? null : onSubmit,
-                    child: Semantics(
-                      label: activity
-                          ? 'Send activity message'
-                          : 'Send food message',
-                      child: Container(
-                        width: 36,
-                        height: 36,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: FoodStyle.forest,
-                        ),
-                        child: const Icon(
-                          CupertinoIcons.arrow_up,
-                          size: 25,
-                          color: CupertinoColors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
           ),
-        ],
+        ),
+      ),
+    );
+  }
+
+  Widget _textInput() => controller == null
+      ? Text(
+          _placeholder,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: _placeholderStyle,
+        )
+      : CupertinoTextField(
+          key: Key(activity ? 'activity-description' : 'food-description'),
+          controller: controller,
+          focusNode: focusNode,
+          enabled: onSubmit != null,
+          placeholder: _placeholder,
+          placeholderStyle: _placeholderStyle,
+          style: const TextStyle(fontSize: _inputFontSize),
+          decoration: null,
+          padding: EdgeInsets.zero,
+          maxLength: 2000,
+          textInputAction: TextInputAction.send,
+          onSubmitted: (_) => onSubmit?.call(),
+        );
+
+  Widget _sendButton() => ValueListenableBuilder<TextEditingValue>(
+    valueListenable: controller!,
+    builder: (context, value, _) => CupertinoButton(
+      key: Key(activity ? 'parse-activity' : 'parse-food'),
+      padding: EdgeInsets.zero,
+      minimumSize: const Size(44, 44),
+      onPressed: value.text.trim().isEmpty ? null : onSubmit,
+      child: Semantics(
+        label: activity ? 'Send activity message' : 'Send food message',
+        child: _sendIcon,
       ),
     ),
   );

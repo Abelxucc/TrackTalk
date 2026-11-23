@@ -5,11 +5,13 @@ import 'shared/food_style.dart';
 class MePage extends StatelessWidget {
   const MePage({
     super.key,
+    required this.onEditProfile,
     required this.onSignOut,
     this.signingOut = false,
     this.error,
   });
 
+  final VoidCallback onEditProfile;
   final VoidCallback onSignOut;
   final bool signingOut;
   final String? error;
@@ -26,7 +28,12 @@ class MePage extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(22, 48, 22, 22),
           children: [
-            _menuItem('Edit my profile', CupertinoIcons.person),
+            _menuItem(
+              'Edit my profile',
+              CupertinoIcons.person,
+              key: const Key('edit-my-profile'),
+              onPressed: onEditProfile,
+            ),
             const SizedBox(height: 14),
             _menuItem('Settings', CupertinoIcons.gear_alt),
             const SizedBox(height: 14),
@@ -35,7 +42,9 @@ class MePage extends StatelessWidget {
             _menuItem(
               'Sign out',
               CupertinoIcons.square_arrow_right,
-              action: true,
+              key: const Key('sign-out'),
+              onPressed: onSignOut,
+              busy: signingOut,
             ),
             if (error != null) ...[
               const SizedBox(height: 14),
@@ -58,7 +67,13 @@ class MePage extends StatelessWidget {
     ],
   );
 
-  Widget _menuItem(String label, IconData icon, {bool action = false}) {
+  Widget _menuItem(
+    String label,
+    IconData icon, {
+    Key? key,
+    VoidCallback? onPressed,
+    bool busy = false,
+  }) {
     final row = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
       child: Row(
@@ -80,12 +95,12 @@ class MePage extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          if (!action)
+          if (onPressed == null)
             const Text(
               'Coming soon',
               style: TextStyle(fontSize: 10, color: FoodStyle.muted),
             )
-          else if (signingOut)
+          else if (busy)
             const CupertinoActivityIndicator()
           else
             const Icon(
@@ -108,12 +123,12 @@ class MePage extends StatelessWidget {
           ),
         ],
       ),
-      child: action
+      child: onPressed != null
           ? CupertinoButton(
-              key: const Key('sign-out'),
+              key: key,
               padding: EdgeInsets.zero,
               borderRadius: BorderRadius.circular(32),
-              onPressed: signingOut ? null : onSignOut,
+              onPressed: signingOut ? null : onPressed,
               child: row,
             )
           : Semantics(button: true, enabled: false, child: row),
