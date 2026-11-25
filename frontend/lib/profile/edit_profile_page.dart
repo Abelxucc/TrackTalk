@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import '../food/food_service.dart';
 import '../registration/profile_details.dart';
 import '../shared/food_style.dart';
+import 'profile_avatar.dart';
 
 class EditProfilePage extends StatefulWidget {
   const EditProfilePage({super.key, required this.service, this.pickPhoto});
@@ -461,8 +462,11 @@ class _EditProfilePageState extends State<EditProfilePage> {
         _saveError = null;
       });
       try {
-        await widget.service.saveProfile(draft.changes, photo: photo);
-        if (mounted) Navigator.of(context).pop();
+        final profile = await widget.service.saveProfile(
+          draft.changes,
+          photo: photo,
+        );
+        if (mounted) Navigator.of(context).pop(profile);
         return;
       } catch (error) {
         if (!mounted) return;
@@ -504,7 +508,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
         draft.errors.isNotEmpty;
     final errors = _showValidation ? draft.errors : const <String, String>{};
     return FoodStyle.theme(
-      PopScope<void>(
+      PopScope<AccountProfile>(
         canPop: !_saving && !_pickingPhoto && !dirty,
         onPopInvokedWithResult: (didPop, _) {
           if (!didPop) _leave();
@@ -751,52 +755,28 @@ class _EditProfilePageState extends State<EditProfilePage> {
     ],
   );
 
-  Widget _photoRow() {
-    final photo = _pendingPhoto ?? _profile?.photo;
-    const placeholder = ColoredBox(
-      color: _fieldFill,
-      child: Icon(CupertinoIcons.person_fill, color: _muted, size: 26),
-    );
-
-    return Row(
-      children: [
-        Semantics(
-          image: true,
-          label: 'Profile photo',
-          child: ClipOval(
-            child: SizedBox.square(
-              dimension: 54,
-              child: photo == null
-                  ? placeholder
-                  : Image.memory(
-                      photo,
-                      fit: BoxFit.cover,
-                      excludeFromSemantics: true,
-                      errorBuilder: (_, _, _) => placeholder,
-                    ),
-            ),
+  Widget _photoRow() => Row(
+    children: [
+      ProfileAvatar(photo: _pendingPhoto ?? _profile?.photo),
+      Expanded(
+        child: Align(
+          alignment: AlignmentDirectional.centerEnd,
+          child: CupertinoButton(
+            key: const Key('profile-change-photo'),
+            padding: const EdgeInsetsDirectional.only(start: 12),
+            onPressed: _saving || _pickingPhoto ? null : _pickPhoto,
+            child: _pickingPhoto
+                ? const CupertinoActivityIndicator()
+                : Text(
+                    'Change photo',
+                    textAlign: TextAlign.end,
+                    style: _labelStyle.copyWith(color: FoodStyle.forest),
+                  ),
           ),
         ),
-        Expanded(
-          child: Align(
-            alignment: AlignmentDirectional.centerEnd,
-            child: CupertinoButton(
-              key: const Key('profile-change-photo'),
-              padding: const EdgeInsetsDirectional.only(start: 12),
-              onPressed: _saving || _pickingPhoto ? null : _pickPhoto,
-              child: _pickingPhoto
-                  ? const CupertinoActivityIndicator()
-                  : Text(
-                      'Change photo',
-                      textAlign: TextAlign.end,
-                      style: _labelStyle.copyWith(color: FoodStyle.forest),
-                    ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
 
   Widget _section(String title) => Semantics(
     header: true,

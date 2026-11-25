@@ -291,14 +291,16 @@ void main() {
         tester.getCenter(find.byKey(const Key('nav-selection'))).dx,
         closeTo(end, .1),
       );
-      expect(find.text('Edit my profile'), findsOneWidget);
-      expect(find.text('Settings'), findsOneWidget);
-      expect(find.text('About us'), findsOneWidget);
-      expect(find.text('Coming soon'), findsNWidgets(2));
+      expect(find.text('Your profile'), findsOneWidget);
+      expect(find.text('Edit my profile'), findsNothing);
       expect(find.text('Sign out'), findsOneWidget);
-      await tester.tap(find.text('Settings'));
-      await tester.pumpAndSettle();
-      expect(find.text('Coming soon'), findsNWidgets(2));
+      for (final label in ['Settings', 'About us']) {
+        expect(find.text(label), findsOneWidget);
+        await tester.tap(find.text(label));
+        await tester.pumpAndSettle();
+        expect(find.text('Your profile'), findsOneWidget);
+        expect(find.text('Edit my profile'), findsNothing);
+      }
       await tap(tester, find.byKey(const Key('nav-home')));
       expect(find.text('Today'), findsOneWidget);
       await tap(tester, find.byKey(const Key('nav-food')));
@@ -368,7 +370,10 @@ void main() {
       phone(tester);
       final response = Completer<http.Response>();
       var calls = 0;
-      final client = MockClient((request) {
+      final client = MockClient((request) async {
+        if (request.url.path == '/api/auth/profile/') {
+          return http.Response('{}', 200);
+        }
         calls++;
         expect(request.method, 'POST');
         expect(request.url.path, '/api/auth/logout/');

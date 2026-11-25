@@ -9,8 +9,12 @@ import 'package:image_picker/image_picker.dart' show XFile;
 import 'package:tracktalk/app_shell.dart';
 import 'package:tracktalk/food/food_service.dart';
 import 'package:tracktalk/profile/edit_profile_page.dart';
+import 'package:tracktalk/registration/profile_details.dart';
 
 const _saveError = 'Please try saving the profile again.';
+const _testPhoto =
+    'iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAIAAADZSiLoAAAAEklEQVR4nG'
+    'NkaGCAACYojcwCAA54AIZp6Rr0AAAAAElFTkSuQmCC';
 const _app = MaterialApp(
   home: AppShell(service: FoodService('edit-profile-token')),
 );
@@ -54,12 +58,16 @@ void _usePhoneSize(WidgetTester tester) {
   addTearDown(tester.view.resetDevicePixelRatio);
 }
 
-Future<void> _openProfile(WidgetTester tester) async {
+Future<void> _openMe(WidgetTester tester) async {
   _usePhoneSize(tester);
   await tester.pumpWidget(_app);
   await tester.pumpAndSettle();
   await _tap(tester, _key('nav-me'));
-  await _tap(tester, find.text('Edit my profile'));
+}
+
+Future<void> _openProfile(WidgetTester tester) async {
+  await _openMe(tester);
+  await _tap(tester, _key('edit-my-profile'));
 }
 
 class _ProfileBackend {
@@ -109,13 +117,18 @@ void main() {
   testWidgets('Profile keeps metric values and retries a failed save', (
     tester,
   ) async {
-    final backend = _ProfileBackend(failedSaves: 1);
+    final backend = _ProfileBackend(failedSaves: 1)..values['name'] = 'Alex';
     final client = backend.client();
     addTearDown(client.close);
 
     await http.runWithClient(() async {
-      await _openProfile(tester);
-      expect(backend.reads, 1);
+      await _openMe(tester);
+      final profileCard = _key('edit-my-profile');
+      expect(find.text('Alex'), findsOneWidget);
+      expect(find.text('Edit my profile'), findsNothing);
+      await _tap(tester, profileCard);
+      expect(backend.reads, 2);
+      expect(_value(tester, 'name'), 'Alex');
       expect(find.text('Non-binary'), findsOneWidget);
       expect(_value(tester, 'age'), '24');
       expect(_value(tester, 'height'), '170.02');
@@ -130,10 +143,11 @@ void main() {
       await _show(tester, _field('save'));
       expect(tester.widget<CupertinoButton>(_field('save')).onPressed, isNull);
 
+      await _enter(tester, 'name', 'Alex Chen');
       await _enter(tester, 'age', '25');
       await _enter(tester, 'phone', '');
       await _tap(tester, _field('save'));
-      const changes = {'age': 25, 'phone_number': ''};
+      const changes = {'name': 'Alex Chen', 'age': 25, 'phone_number': ''};
       expect(backend.patches, [changes]);
       expect(find.text(_saveError), findsOneWidget);
       expect(_value(tester, 'age'), '25');
@@ -142,12 +156,19 @@ void main() {
       expect(_value(tester, 'height-inches'), '6.94');
       expect(double.parse(_value(tester, 'weight')), closeTo(161.53, .01));
 
+      backend.values['photo'] = _testPhoto;
       await _tap(tester, _field('save'));
       expect(backend.patches, [changes, changes]);
       expect(find.text('Sign out'), findsOneWidget);
-      expect(_field('save'), findsNothing);
-      await _tap(tester, find.text('Edit my profile'));
+      expect(find.text('Alex Chen'), findsOneWidget);
+      final avatar = tester.widget<Image>(
+        find.descendant(of: profileCard, matching: find.byType(Image)),
+      );
+      expect((avatar.image as MemoryImage).bytes, base64Decode(_testPhoto));
       expect(backend.reads, 2);
+      expect(_field('save'), findsNothing);
+      await _tap(tester, profileCard);
+      expect(backend.reads, 3);
       expect(_value(tester, 'age'), '25');
       expect(_value(tester, 'phone'), isEmpty);
       expect(_value(tester, 'height'), '170.02');
@@ -163,10 +184,6 @@ void main() {
     final backend = _ProfileBackend(failedSaves: 2);
     final client = backend.client();
     addTearDown(client.close);
-    const photo =
-        'iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAIAAADZSiLoAAAAEklEQVR4nG'
-        'NkaGCAACYojcwCAA54AIZp6Rr0AAAAAElFTkSuQmCC';
-
     await http.runWithClient(() async {
       await tester.pumpWidget(
         CupertinoApp(
@@ -174,12 +191,12 @@ void main() {
             child: Builder(
               builder: (context) => Center(
                 child: CupertinoButton(
-                  onPressed: () => Navigator.of(context).push<void>(
-                    CupertinoPageRoute(
+                  onPressed: () => Navigator.of(context).push<AccountProfile>(
+                    CupertinoPageRoute<AccountProfile>(
                       builder: (_) => EditProfilePage(
                         service: const FoodService('edit-profile-token'),
                         pickPhoto: () async => XFile.fromData(
-                          base64Decode(photo),
+                          base64Decode(_testPhoto),
                           mimeType: 'image/png',
                           name: 'photo.png',
                         ),
@@ -201,7 +218,7 @@ void main() {
 
       await _tap(tester, find.text('Try again'));
       expect(find.text('Photo upload failed'), findsOneWidget);
-      const attempted = {'name': 'Alex 陈', 'photo': photo};
+      const attempted = {'name': 'Alex 陈', 'photo': _testPhoto};
       expect(backend.patches, [attempted, attempted]);
 
       await _tap(tester, find.text('Cancel'));

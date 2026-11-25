@@ -13,6 +13,7 @@ import 'food/food_service.dart';
 import 'history/food_history_page.dart';
 import 'me_page.dart';
 import 'profile/edit_profile_page.dart';
+import 'registration/profile_details.dart';
 import 'shared/app_navigation_scope.dart';
 import 'shared/food_chrome.dart';
 import 'shared/food_style.dart';
@@ -38,6 +39,7 @@ class _AppShellState extends State<AppShell> {
   int _pendingWrites = 0;
   bool _signingOut = false;
   String? _error;
+  Future<AccountProfile?>? _profile;
 
   bool get _busy => _signingOut || _pendingWrites > 0;
 
@@ -78,7 +80,12 @@ class _AppShellState extends State<AppShell> {
   void _select(FoodDestination destination) {
     if (_busy || _selected == destination) return;
     FocusScope.of(context).unfocus();
-    setState(() => _selected = destination);
+    setState(() {
+      _selected = destination;
+      if (destination == FoodDestination.me) {
+        _profile = _loadProfile();
+      }
+    });
   }
 
   Future<void> _signOut() async {
@@ -117,13 +124,27 @@ class _AppShellState extends State<AppShell> {
     _select(FoodDestination.add);
   }
 
-  void _openProfile() {
+  Future<AccountProfile?> _loadProfile() async {
+    try {
+      return await widget.service.profile();
+    } catch (_) {
+      // Keep the profile card usable so the editor can retry loading details.
+      return null;
+    }
+  }
+
+  Future<void> _openProfile() async {
     if (_busy) return;
-    Navigator.of(context).push<void>(
-      CupertinoPageRoute(
+    final profile = await Navigator.of(context).push<AccountProfile>(
+      CupertinoPageRoute<AccountProfile>(
         builder: (_) => EditProfilePage(service: widget.service),
       ),
     );
+    if (mounted && profile != null) {
+      setState(() {
+        _profile = Future.value(profile);
+      });
+    }
   }
 
   Future<void> _openHistory(DateTime date, HistoryFilter filter) =>
@@ -213,11 +234,15 @@ class _AppShellState extends State<AppShell> {
                             ),
                             logActivity: _logActivity,
                           ),
-                          MePage(
-                            onEditProfile: _openProfile,
-                            onSignOut: _signOut,
-                            signingOut: _signingOut,
-                            error: _error,
+                          FutureBuilder<AccountProfile?>(
+                            future: _profile,
+                            builder: (context, snapshot) => MePage(
+                              profile: snapshot.data,
+                              onEditProfile: _openProfile,
+                              onSignOut: _signOut,
+                              signingOut: _signingOut,
+                              error: _error,
+                            ),
                           ),
                         ],
                       ),
