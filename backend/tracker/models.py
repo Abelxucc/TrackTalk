@@ -70,6 +70,8 @@ class AccountProfile(models.Model):
     )
     email = models.EmailField(max_length=254)
     phone_number = models.CharField(max_length=16)
+    name = models.CharField(max_length=80, blank=True, default="")
+    photo = models.BinaryField(blank=True, default=bytes)
 
     class Gender(models.TextChoices):
         MALE = "male", "Male"

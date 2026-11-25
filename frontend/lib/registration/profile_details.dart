@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 enum ProfileGender {
   male('male', 'Male'),
   female('female', 'Female'),
@@ -37,6 +40,8 @@ class AccountProfile {
     required this.weightKg,
     required this.age,
     required this.phoneNumber,
+    this.name = '',
+    this.photo,
   });
 
   final ProfileGender? gender;
@@ -44,14 +49,21 @@ class AccountProfile {
   final String? weightKg;
   final int? age;
   final String phoneNumber;
+  final String name;
+  final Uint8List? photo;
 
-  factory AccountProfile.fromJson(Map<String, dynamic> json) => AccountProfile(
-    gender: ProfileGender.values
-        .where((gender) => gender.value == json['gender'])
-        .firstOrNull,
-    heightCm: json['height_cm']?.toString(),
-    weightKg: json['weight_kg']?.toString(),
-    age: json['age'] as int?,
-    phoneNumber: json['phone_number'] as String? ?? '',
-  );
+  factory AccountProfile.fromJson(Map<String, dynamic> json) {
+    final photo = json['photo'] as String?;
+    return AccountProfile(
+      gender: ProfileGender.values
+          .where((gender) => gender.value == json['gender'])
+          .firstOrNull,
+      heightCm: json['height_cm']?.toString(),
+      weightKg: json['weight_kg']?.toString(),
+      age: json['age'] as int?,
+      phoneNumber: json['phone_number'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      photo: photo == null ? null : base64Decode(photo),
+    );
+  }
 }
