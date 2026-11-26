@@ -8,6 +8,7 @@ import 'package:http/testing.dart';
 import 'package:image_picker/image_picker.dart' show XFile;
 import 'package:tracktalk/app_shell.dart';
 import 'package:tracktalk/food/food_service.dart';
+import 'package:tracktalk/home_greeting.dart';
 import 'package:tracktalk/profile/edit_profile_page.dart';
 import 'package:tracktalk/registration/profile_details.dart';
 
@@ -114,6 +115,54 @@ class _ProfileBackend {
 }
 
 void main() {
+  testWidgets('Home shows the saved profile and updates its greeting by time', (
+    tester,
+  ) async {
+    _usePhoneSize(tester);
+    final backend = _ProfileBackend()
+      ..values['name'] = 'Alex'
+      ..values['photo'] = _testPhoto;
+    final client = backend.client();
+    addTearDown(client.close);
+    var now = DateTime(2026, 11, 25, 11, 59, 59);
+
+    await http.runWithClient(() async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppShell(
+            service: const FoodService('edit-profile-token'),
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Good morning,'), findsOneWidget);
+      expect(find.text('Alex'), findsOneWidget);
+      final avatar = tester.widget<Image>(
+        find.descendant(
+          of: find.byType(HomeGreeting),
+          matching: find.byType(Image),
+        ),
+      );
+      expect((avatar.image as MemoryImage).bytes, base64Decode(_testPhoto));
+
+      for (final (hour, greeting) in [
+        (12, 'Good afternoon,'),
+        (18, 'Good evening,'),
+        (22, 'Good night,'),
+      ]) {
+        final next = DateTime(2026, 11, 25, hour);
+        final elapsed = next.difference(now);
+        now = next;
+        await tester.pump(elapsed);
+        expect(find.text(greeting), findsOneWidget);
+        expect(find.text('Today'), findsOneWidget);
+      }
+      expect(backend.reads, 1);
+      expect(tester.takeException(), isNull);
+    }, () => client);
+  });
+
   testWidgets('Profile keeps metric values and retries a failed save', (
     tester,
   ) async {
@@ -127,7 +176,7 @@ void main() {
       expect(find.text('Alex'), findsOneWidget);
       expect(find.text('Edit my profile'), findsNothing);
       await _tap(tester, profileCard);
-      expect(backend.reads, 2);
+      expect(backend.reads, 3);
       expect(_value(tester, 'name'), 'Alex');
       expect(find.text('Non-binary'), findsOneWidget);
       expect(_value(tester, 'age'), '24');
@@ -165,14 +214,17 @@ void main() {
         find.descendant(of: profileCard, matching: find.byType(Image)),
       );
       expect((avatar.image as MemoryImage).bytes, base64Decode(_testPhoto));
-      expect(backend.reads, 2);
+      expect(backend.reads, 3);
       expect(_field('save'), findsNothing);
       await _tap(tester, profileCard);
-      expect(backend.reads, 3);
+      expect(backend.reads, 4);
       expect(_value(tester, 'age'), '25');
       expect(_value(tester, 'phone'), isEmpty);
       expect(_value(tester, 'height'), '170.02');
       expect(_value(tester, 'weight'), '73.27');
+      await _tap(tester, _key('page-back'));
+      await _tap(tester, _key('nav-home'));
+      expect(find.text('Alex Chen'), findsOneWidget);
       expect(tester.takeException(), isNull);
     }, () => client);
   });

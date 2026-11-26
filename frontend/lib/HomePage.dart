@@ -5,6 +5,8 @@ import 'activity/activity_record.dart';
 import 'food/food_service.dart';
 import 'history/food_history_order.dart';
 import 'history/food_history_page.dart';
+import 'home_greeting.dart';
+import 'registration/profile_details.dart';
 import 'shared/food_style.dart';
 
 class HomePage extends StatefulWidget {
@@ -14,12 +16,16 @@ class HomePage extends StatefulWidget {
     required this.today,
     required this.active,
     required this.openHistory,
+    required this.profile,
+    required this.now,
   });
 
   final FoodService service;
   final DateTime today;
   final bool active;
   final Future<void> Function(DateTime, HistoryFilter) openHistory;
+  final Future<AccountProfile?> profile;
+  final DateTime Function() now;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -104,6 +110,12 @@ class _HomePageState extends State<HomePage> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(22, 16, 22, 14),
         children: [
+          HomeGreeting(
+            profile: widget.profile,
+            now: widget.now,
+            active: widget.active,
+          ),
+          const SizedBox(height: 22),
           Row(
             children: [
               Expanded(

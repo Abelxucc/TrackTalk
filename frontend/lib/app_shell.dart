@@ -193,6 +193,8 @@ class _AppShellState extends State<AppShell> {
                             today: _today,
                             active: _selected == FoodDestination.home,
                             openHistory: _openHistory,
+                            profile: _profile ??= _loadProfile(),
+                            now: widget.now,
                           ),
                           FoodDiaryPage(
                             service: widget.service,
