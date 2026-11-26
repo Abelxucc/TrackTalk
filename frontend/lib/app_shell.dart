@@ -14,6 +14,8 @@ import 'history/food_history_page.dart';
 import 'me_page.dart';
 import 'profile/edit_profile_page.dart';
 import 'registration/profile_details.dart';
+import 'settings/about_page.dart';
+import 'settings/settings_page.dart';
 import 'shared/app_navigation_scope.dart';
 import 'shared/food_chrome.dart';
 import 'shared/food_style.dart';
@@ -162,6 +164,11 @@ class _AppShellState extends State<AppShell> {
         ),
       );
 
+  void _openMePage(Widget page) {
+    if (_busy) return;
+    Navigator.of(context).push<void>(CupertinoPageRoute(builder: (_) => page));
+  }
+
   @override
   Widget build(BuildContext context) => FoodStyle.theme(
     PopScope(
@@ -241,6 +248,12 @@ class _AppShellState extends State<AppShell> {
                             builder: (context, snapshot) => MePage(
                               profile: snapshot.data,
                               onEditProfile: _openProfile,
+                              onSettings: () => _openMePage(
+                                SettingsPage(
+                                  email: widget.service.accountEmail,
+                                ),
+                              ),
+                              onAbout: () => _openMePage(const AboutPage()),
                               onSignOut: _signOut,
                               signingOut: _signingOut,
                               error: _error,

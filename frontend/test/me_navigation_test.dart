@@ -270,7 +270,7 @@ void main() {
   );
 
   testWidgets(
-    'Me has placeholder cards and selection animates across the bar',
+    'Me opens Settings and About us and selection animates across the bar',
     (tester) async {
       phone(tester);
       await tester.pumpWidget(app);
@@ -294,12 +294,15 @@ void main() {
       expect(find.text('Your profile'), findsOneWidget);
       expect(find.text('Edit my profile'), findsNothing);
       expect(find.text('Sign out'), findsOneWidget);
-      for (final label in ['Settings', 'About us']) {
+      for (final (label, content) in [
+        ('Settings', 'Account'),
+        ('About us', 'TrackTalk'),
+      ]) {
         expect(find.text(label), findsOneWidget);
-        await tester.tap(find.text(label));
-        await tester.pumpAndSettle();
+        await tap(tester, find.text(label));
+        expect(find.text(content), findsOneWidget);
+        await tap(tester, find.byKey(const Key('page-back')));
         expect(find.text('Your profile'), findsOneWidget);
-        expect(find.text('Edit my profile'), findsNothing);
       }
       await tap(tester, find.byKey(const Key('nav-home')));
       expect(find.text('Today'), findsOneWidget);

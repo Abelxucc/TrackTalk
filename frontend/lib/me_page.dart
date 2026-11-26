@@ -9,6 +9,8 @@ class MePage extends StatelessWidget {
   const MePage({
     super.key,
     required this.onEditProfile,
+    required this.onSettings,
+    required this.onAbout,
     required this.onSignOut,
     this.profile,
     this.signingOut = false,
@@ -16,6 +18,8 @@ class MePage extends StatelessWidget {
   });
 
   final VoidCallback onEditProfile;
+  final VoidCallback onSettings;
+  final VoidCallback onAbout;
   final VoidCallback onSignOut;
   final AccountProfile? profile;
   final bool signingOut;
@@ -43,9 +47,13 @@ class MePage extends StatelessWidget {
           children: [
             _profileCard(),
             _rowGap,
-            _menuItem('Settings', CupertinoIcons.gear_alt),
+            _menuItem(
+              'Settings',
+              CupertinoIcons.gear_alt,
+              onPressed: onSettings,
+            ),
             _rowGap,
-            _menuItem('About us', CupertinoIcons.info),
+            _menuItem('About us', CupertinoIcons.info, onPressed: onAbout),
             _rowGap,
             _menuItem(
               'Sign out',
@@ -102,7 +110,7 @@ class MePage extends StatelessWidget {
     String label,
     IconData icon, {
     Key? key,
-    VoidCallback? onPressed,
+    required VoidCallback onPressed,
     bool busy = false,
   }) {
     final row = _row(
@@ -120,20 +128,13 @@ class MePage extends StatelessWidget {
       trailing: busy ? const CupertinoActivityIndicator(radius: 8) : null,
     );
     return _card(
-      onPressed != null
-          ? CupertinoButton(
-              key: key,
-              padding: EdgeInsets.zero,
-              borderRadius: _cardRadius,
-              onPressed: signingOut ? null : onPressed,
-              child: row,
-            )
-          : Semantics(
-              button: true,
-              enabled: false,
-              value: 'Coming soon',
-              child: row,
-            ),
+      CupertinoButton(
+        key: key,
+        padding: EdgeInsets.zero,
+        borderRadius: _cardRadius,
+        onPressed: signingOut ? null : onPressed,
+        child: row,
+      ),
     );
   }
 
