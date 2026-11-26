@@ -1,5 +1,8 @@
+import base64
 from decimal import Decimal
+from io import BytesIO
 
+from PIL import Image
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
@@ -41,7 +44,7 @@ class AccountProfileTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {
             "phone_number": "", "gender": "", "height_cm": None,
-            "weight_kg": None, "age": None,
+            "weight_kg": None, "age": None, "name": "", "photo": None,
         })
         self.assertIn("no-store", response.headers["Cache-Control"])
         empty_patch = self.client.patch(self.url, {}, format="json")
@@ -58,6 +61,7 @@ class AccountProfileTests(TestCase):
         self.assertEqual(result.status_code, 200, result.data)
         expected = {
             **updates, "phone_number": "+447700900123", "height_cm": "172.50",
+            "name": "", "photo": None,
         }
         self.assertEqual(result.json(), expected)
         owner_profile = AccountProfile.objects.get(user=self.owner)
@@ -76,12 +80,30 @@ class AccountProfileTests(TestCase):
         self.assertEqual(result.status_code, 200, result.data)
         self.assertEqual(result.json(), {
             "phone_number": "", "gender": "female", "height_cm": "172.50",
-            "weight_kg": None, "age": 30,
+            "weight_kg": None, "age": 30, "name": "", "photo": None,
         })
         profile.refresh_from_db()
         self.assertEqual(profile.phone_number, "")
         self.assertEqual(profile.age, 30)
         self.assertEqual(profile.gender, "female")
+
+    def test_name_and_photo_save_together_and_rejected_photo_leaves_both_intact(self):
+        with BytesIO() as image_file:
+            Image.new("RGB", (640, 480), "green").save(image_file, "PNG")
+            photo = base64.b64encode(image_file.getvalue()).decode("ascii")
+
+        saved = self.client.patch(self.url, {"name": "  Alex 陈  ", "photo": photo}, format="json")
+        self.assertEqual(saved.status_code, 200, saved.data)
+        self.assertEqual(saved.data["name"], "Alex 陈")
+        with Image.open(BytesIO(base64.b64decode(saved.data["photo"]))) as avatar:
+            self.assertEqual(avatar.format, "JPEG")
+            self.assertEqual(avatar.size, (320, 320))
+
+        invalid_photo = base64.b64encode(b"not an image").decode("ascii")
+        failed = self.client.patch(self.url, {"name": "New name", "photo": invalid_photo}, format="json")
+        self.assertEqual(failed.status_code, 400, failed.data)
+        self.assertIn("photo", failed.data)
+        self.assertEqual(self.client.get(self.url).json(), saved.json())
 
     def test_invalid_fields_and_account_changes_are_rejected_before_saving(self):
         profile = AccountProfile.objects.create(user=self.owner, email=self.owner.email, age=29)

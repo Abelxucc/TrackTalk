@@ -1,5 +1,8 @@
+import base64
 import re
+from io import BytesIO
 
+from PIL import Image, ImageOps
 from django.db import IntegrityError
 from django.views.decorators.cache import never_cache
 from rest_framework import serializers, status
@@ -39,6 +42,51 @@ class ProfileFieldsSerializer(serializers.Serializer):
         return normalized
 
 
+class ProfilePhotoField(serializers.Field):
+    max_bytes = 1024 * 1024
+    max_pixels = 16_000_000
+    formats = ("JPEG", "PNG", "WEBP")
+    default_error_messages = {
+        "invalid": "Choose a JPEG, PNG, or WebP photo.",
+        "too_large": "Choose a smaller photo (up to 1 MB).",
+        "too_many_pixels": "Choose a photo with a lower resolution.",
+    }
+
+    def to_internal_value(self, data):
+        if not isinstance(data, str) or not data:
+            self.fail("invalid")
+        if len(data) > 4 * ((self.max_bytes + 2) // 3):
+            self.fail("too_large")
+        try:
+            contents = base64.b64decode(data, validate=True)
+        except ValueError:
+            self.fail("invalid")
+        if len(contents) > self.max_bytes:
+            self.fail("too_large")
+
+        try:
+            with Image.open(BytesIO(contents), formats=self.formats) as image:
+                if image.width * image.height > self.max_pixels:
+                    self.fail("too_many_pixels")
+                ImageOps.exif_transpose(image, in_place=True)
+                cropped = ImageOps.fit(image.convert("RGB"), (320, 320))
+                with BytesIO() as output:
+                    cropped.save(output, "JPEG", quality=85)
+                    return output.getvalue()
+        except Image.DecompressionBombError:
+            self.fail("too_many_pixels")
+        except (OSError, ValueError, SyntaxError):
+            self.fail("invalid")
+
+    def to_representation(self, value):
+        return base64.b64encode(value).decode("ascii") if value else None
+
+
+class AccountProfileSerializer(ProfileFieldsSerializer):
+    name = serializers.CharField(max_length=80, allow_blank=True, required=False)
+    photo = ProfilePhotoField(required=False)
+
+
 @never_cache
 @api_view(["GET", "PATCH"])
 @authentication_classes([TokenAuthentication])
@@ -47,9 +95,9 @@ class ProfileFieldsSerializer(serializers.Serializer):
 def account_profile(request):
     profile = AccountProfile.objects.filter(user=request.user).first()
     if request.method == "GET":
-        return Response(ProfileFieldsSerializer(profile or AccountProfile()).data)
+        return Response(AccountProfileSerializer(profile or AccountProfile()).data)
 
-    serializer = ProfileFieldsSerializer(data=request.data, partial=True)
+    serializer = AccountProfileSerializer(data=request.data, partial=True)
     serializer.is_valid(raise_exception=True)
     unknown_fields = request.data.keys() - serializer.fields.keys()
     if unknown_fields:
@@ -58,7 +106,7 @@ def account_profile(request):
         })
     updates = serializer.validated_data
     if not updates:
-        return Response(ProfileFieldsSerializer(profile or AccountProfile()).data)
+        return Response(AccountProfileSerializer(profile or AccountProfile()).data)
 
     if profile is None:
         email = request.user.email.strip().lower()
@@ -77,11 +125,11 @@ def account_profile(request):
                 status=status.HTTP_409_CONFLICT,
             )
         if created:
-            return Response(ProfileFieldsSerializer(profile).data)
+            return Response(AccountProfileSerializer(profile).data)
 
     # Update only supplied fields, so concurrent edits to other fields survive.
     for field, value in updates.items():
         setattr(profile, field, value)
     profile.save(update_fields=updates)
     profile.refresh_from_db(fields=serializer.fields)
-    return Response(ProfileFieldsSerializer(profile).data)
+    return Response(AccountProfileSerializer(profile).data)

@@ -679,7 +679,7 @@ class FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
                           activity: _activityMode,
                           onChanged: _busy || widget.initialRecord != null
                               ? null
-                              : _selectMode,
+                              : selectMode,
                         ),
                       ),
                       Expanded(
@@ -742,9 +742,7 @@ class FoodPageState extends State<FoodPage> with WidgetsBindingObserver {
     );
   }
 
-  void showActivity() => _selectMode(true);
-
-  void _selectMode(bool activity) {
+  void selectMode(bool activity) {
     if (_activityMode == activity) return;
     FocusScope.of(context).unfocus();
     setState(() => _activityMode = activity);

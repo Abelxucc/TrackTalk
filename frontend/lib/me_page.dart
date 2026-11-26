@@ -1,47 +1,63 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart' show Icons;
 
+import 'profile/profile_avatar.dart';
+import 'registration/profile_details.dart';
 import 'shared/food_style.dart';
 
 class MePage extends StatelessWidget {
   const MePage({
     super.key,
     required this.onEditProfile,
+    required this.onSettings,
+    required this.onAbout,
     required this.onSignOut,
+    this.profile,
     this.signingOut = false,
     this.error,
   });
 
   final VoidCallback onEditProfile;
+  final VoidCallback onSettings;
+  final VoidCallback onAbout;
   final VoidCallback onSignOut;
+  final AccountProfile? profile;
   final bool signingOut;
   final String? error;
+
+  static const _cardRadius = BorderRadius.all(Radius.circular(18));
+  static const _avatarSize = 66.0;
+  static const _labelInset = 87.0;
+  static const _rowGap = SizedBox(height: 10);
 
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       const Padding(
-        padding: EdgeInsets.fromLTRB(22, 18, 22, 0),
-        child: Text('Me', style: TextStyle(fontSize: 24, letterSpacing: -.6)),
+        padding: EdgeInsets.fromLTRB(18, 18, 18, 0),
+        child: Text(
+          'Me',
+          style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700),
+        ),
       ),
       Expanded(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(22, 48, 22, 22),
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 22),
           children: [
+            _profileCard(),
+            _rowGap,
             _menuItem(
-              'Edit my profile',
-              CupertinoIcons.person,
-              key: const Key('edit-my-profile'),
-              onPressed: onEditProfile,
+              'Settings',
+              CupertinoIcons.gear_alt,
+              onPressed: onSettings,
             ),
-            const SizedBox(height: 14),
-            _menuItem('Settings', CupertinoIcons.gear_alt),
-            const SizedBox(height: 14),
-            _menuItem('About us', CupertinoIcons.info),
-            const SizedBox(height: 14),
+            _rowGap,
+            _menuItem('About us', CupertinoIcons.info, onPressed: onAbout),
+            _rowGap,
             _menuItem(
               'Sign out',
-              CupertinoIcons.square_arrow_right,
+              Icons.logout_rounded,
               key: const Key('sign-out'),
               onPressed: onSignOut,
               busy: signingOut,
@@ -67,71 +83,124 @@ class MePage extends StatelessWidget {
     ],
   );
 
+  Widget _profileCard() {
+    final name = profile?.name.trim() ?? '';
+    return Semantics(
+      hint: 'Opens the profile editor',
+      child: _card(
+        CupertinoButton(
+          key: const Key('edit-my-profile'),
+          onPressed: signingOut ? null : onEditProfile,
+          borderRadius: _cardRadius,
+          padding: EdgeInsets.zero,
+          child: _row(
+            leading: ExcludeSemantics(
+              child: ProfileAvatar(photo: profile?.photo, size: _avatarSize),
+            ),
+            label: name.isEmpty ? 'Your profile' : name,
+            fontSize: 22,
+            padding: const EdgeInsetsDirectional.fromSTEB(12, 9, 16, 9),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _menuItem(
     String label,
     IconData icon, {
     Key? key,
-    VoidCallback? onPressed,
+    required VoidCallback onPressed,
     bool busy = false,
   }) {
-    final row = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: FoodStyle.pale,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, size: 25, color: FoodStyle.forest),
+    final row = _row(
+      leading: SizedBox.square(
+        dimension: 48,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: FoodStyle.pale,
+            borderRadius: BorderRadius.circular(13),
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(fontSize: 16, color: FoodStyle.ink),
-            ),
-          ),
-          const SizedBox(width: 10),
-          if (onPressed == null)
-            const Text(
-              'Coming soon',
-              style: TextStyle(fontSize: 10, color: FoodStyle.muted),
-            )
-          else if (busy)
-            const CupertinoActivityIndicator()
-          else
-            const Icon(
-              CupertinoIcons.chevron_right,
-              size: 15,
-              color: FoodStyle.forest,
-            ),
-        ],
+          child: Icon(icon, size: 26, color: FoodStyle.forest),
+        ),
       ),
+      label: label,
+      trailing: busy ? const CupertinoActivityIndicator(radius: 8) : null,
     );
-    return Container(
-      decoration: BoxDecoration(
-        color: FoodStyle.surface,
-        borderRadius: BorderRadius.circular(32),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x102C4431),
-            blurRadius: 25,
-            offset: Offset(0, 10),
-          ),
-        ],
+    return _card(
+      CupertinoButton(
+        key: key,
+        padding: EdgeInsets.zero,
+        borderRadius: _cardRadius,
+        onPressed: signingOut ? null : onPressed,
+        child: row,
       ),
-      child: onPressed != null
-          ? CupertinoButton(
-              key: key,
-              padding: EdgeInsets.zero,
-              borderRadius: BorderRadius.circular(32),
-              onPressed: signingOut ? null : onPressed,
-              child: row,
-            )
-          : Semantics(button: true, enabled: false, child: row),
     );
   }
+
+  Widget _row({
+    required Widget leading,
+    required String label,
+    double fontSize = 17,
+    EdgeInsetsDirectional padding = const EdgeInsetsDirectional.fromSTEB(
+      16,
+      11,
+      16,
+      11,
+    ),
+    Widget? trailing,
+  }) => Padding(
+    padding: padding,
+    child: Row(
+      children: [
+        SizedBox(
+          width: _labelInset - padding.start,
+          child: Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: leading,
+          ),
+        ),
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: fontSize,
+              fontWeight: FontWeight.w700,
+              color: FoodStyle.ink,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        SizedBox(
+          width: 18,
+          child: Center(
+            child:
+                trailing ??
+                const Icon(
+                  CupertinoIcons.chevron_right,
+                  size: 16,
+                  color: FoodStyle.muted,
+                ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _card(Widget child) => DecoratedBox(
+    decoration: const BoxDecoration(
+      color: FoodStyle.surface,
+      borderRadius: _cardRadius,
+      boxShadow: [
+        BoxShadow(
+          color: Color(0x102C4431),
+          blurRadius: 12,
+          offset: Offset(0, 4),
+        ),
+      ],
+    ),
+    child: child,
+  );
 }

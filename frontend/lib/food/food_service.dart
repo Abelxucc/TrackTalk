@@ -14,6 +14,10 @@ class FoodException implements Exception {
   final int? statusCode;
 }
 
+class ProfilePhotoException extends FoodException {
+  const ProfilePhotoException(super.message);
+}
+
 class FoodItem {
   const FoodItem({required this.name, this.quantity, this.unit = ''});
   final String name;
@@ -253,12 +257,15 @@ class FoodService {
     return AccountProfile.fromJson(data as Map<String, dynamic>);
   }
 
-  Future<AccountProfile> saveProfile(Map<String, Object?> changes) async {
+  Future<AccountProfile> saveProfile(
+    Map<String, Object?> changes, {
+    Uint8List? photo,
+  }) async {
     final data = await _request(
       'PATCH',
       _profilePath,
       token: token,
-      data: changes,
+      data: {...changes, if (photo != null) 'photo': base64Encode(photo)},
     );
     return AccountProfile.fromJson(data as Map<String, dynamic>);
   }
@@ -380,6 +387,11 @@ class FoodService {
           (response.statusCode == 503 &&
               (path == _parsePath || path == _transcribePath))) {
         final body = jsonDecode(response.body);
+        if (path == _profilePath && body is Map && body.containsKey('photo')) {
+          throw ProfilePhotoException(
+            _messages(body['photo']).firstOrNull ?? 'Choose another photo.',
+          );
+        }
         final messages = _messages(body).toList();
         throw FoodException(
           messages.isEmpty ? 'Please check your details.' : messages.join('\n'),

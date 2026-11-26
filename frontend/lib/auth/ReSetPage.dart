@@ -7,8 +7,13 @@ import 'password_reset_service.dart';
 import '../shared/page_back_button.dart';
 
 class ResetPage extends StatefulWidget {
-  const ResetPage({super.key, this.initialEmail = ''});
+  const ResetPage({
+    super.key,
+    this.initialEmail = '',
+    this.fromSettings = false,
+  });
   final String initialEmail;
+  final bool fromSettings;
 
   @override
   State<ResetPage> createState() => _ResetPageState();
@@ -55,7 +60,7 @@ class _ResetPageState extends State<ResetPage> {
     }
   }
 
-  void _backToLogin() {
+  void _back() {
     final navigator = Navigator.of(context);
     if (navigator.canPop()) {
       navigator.pop();
@@ -63,6 +68,9 @@ class _ResetPageState extends State<ResetPage> {
       navigator.pushNamedAndRemoveUntil('/', (_) => false);
     }
   }
+
+  String get _backLabel =>
+      widget.fromSettings ? 'Back to Settings' : 'Back to log in';
 
   @override
   Widget build(BuildContext context) {
@@ -81,7 +89,7 @@ class _ResetPageState extends State<ResetPage> {
                   Align(
                     alignment: Alignment.centerLeft,
                     child: PageBackButton(
-                      onPressed: _backToLogin,
+                      onPressed: _back,
                       enabled: !_busy,
                       color: const Color(0xFF353A35),
                     ),
@@ -97,7 +105,11 @@ class _ResetPageState extends State<ResetPage> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    _finished ? 'Request submitted' : 'Forgot password?',
+                    _finished
+                        ? 'Request submitted'
+                        : widget.fromSettings
+                        ? 'Reset password'
+                        : 'Forgot password?',
                     style: const TextStyle(
                       fontSize: 34,
                       height: 1.15,
@@ -138,9 +150,9 @@ class _ResetPageState extends State<ResetPage> {
                     ),
                     const SizedBox(height: 24),
                     FilledButton(
-                      onPressed: _backToLogin,
+                      onPressed: _back,
                       style: AuthStyle.primaryButton,
-                      child: const Text('Back to log in'),
+                      child: Text(_backLabel),
                     ),
                     TextButton(
                       onPressed: () => setState(() {
@@ -227,7 +239,7 @@ class _ResetPageState extends State<ResetPage> {
                             ),
                             const SizedBox(height: 12),
                             TextButton(
-                              onPressed: _busy ? null : _backToLogin,
+                              onPressed: _busy ? null : _back,
                               style: TextButton.styleFrom(
                                 foregroundColor: const Color(0xFF080C08),
                                 textStyle: AuthStyle.serif.copyWith(
@@ -235,7 +247,7 @@ class _ResetPageState extends State<ResetPage> {
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
-                              child: const Text('Back to log in'),
+                              child: Text(_backLabel),
                             ),
                           ],
                         ),

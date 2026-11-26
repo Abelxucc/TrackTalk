@@ -5,10 +5,17 @@ import 'package:flutter/material.dart' show MaterialApp;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:image_picker/image_picker.dart' show XFile;
 import 'package:tracktalk/app_shell.dart';
 import 'package:tracktalk/food/food_service.dart';
+import 'package:tracktalk/home_greeting.dart';
+import 'package:tracktalk/profile/edit_profile_page.dart';
+import 'package:tracktalk/registration/profile_details.dart';
 
 const _saveError = 'Please try saving the profile again.';
+const _testPhoto =
+    'iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAIAAADZSiLoAAAAEklEQVR4nG'
+    'NkaGCAACYojcwCAA54AIZp6Rr0AAAAAElFTkSuQmCC';
 const _app = MaterialApp(
   home: AppShell(service: FoodService('edit-profile-token')),
 );
@@ -45,21 +52,30 @@ Future<void> _enter(WidgetTester tester, String field, String text) async {
   await tester.pump();
 }
 
-Future<void> _openProfile(WidgetTester tester) async {
+void _usePhoneSize(WidgetTester tester) {
   tester.view.physicalSize = const Size(402, 900);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
+}
+
+Future<void> _openMe(WidgetTester tester) async {
+  _usePhoneSize(tester);
   await tester.pumpWidget(_app);
   await tester.pumpAndSettle();
   await _tap(tester, _key('nav-me'));
-  await _tap(tester, find.text('Edit my profile'));
+}
+
+Future<void> _openProfile(WidgetTester tester) async {
+  await _openMe(tester);
+  await _tap(tester, _key('edit-my-profile'));
 }
 
 class _ProfileBackend {
-  _ProfileBackend({this.failFirstSave = false});
+  _ProfileBackend({this.failedSaves = 0});
 
-  final bool failFirstSave;
+  static const _jsonHeaders = {'content-type': 'application/json'};
+  final int failedSaves;
   final values = <String, dynamic>{
     'gender': 'non_binary',
     'age': 24,
@@ -79,15 +95,19 @@ class _ProfileBackend {
         return http.Response('', 503);
       case ('GET', '/api/auth/profile/'):
         reads++;
-        return http.Response(jsonEncode(values), 200);
+        return http.Response(jsonEncode(values), 200, headers: _jsonHeaders);
       case ('PATCH', '/api/auth/profile/'):
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         patches.add(body);
-        if (failFirstSave && patches.length == 1) {
-          return http.Response(jsonEncode({'detail': _saveError}), 400);
+        if (patches.length <= failedSaves) {
+          return http.Response(
+            jsonEncode({'detail': _saveError}),
+            400,
+            headers: _jsonHeaders,
+          );
         }
         values.addAll(body);
-        return http.Response(jsonEncode(values), 200);
+        return http.Response(jsonEncode(values), 200, headers: _jsonHeaders);
       default:
         fail('Unexpected profile request ${request.method} ${request.url}');
     }
@@ -95,16 +115,69 @@ class _ProfileBackend {
 }
 
 void main() {
+  testWidgets('Home shows the saved profile and updates its greeting by time', (
+    tester,
+  ) async {
+    _usePhoneSize(tester);
+    final backend = _ProfileBackend()
+      ..values['name'] = 'Alex'
+      ..values['photo'] = _testPhoto;
+    final client = backend.client();
+    addTearDown(client.close);
+    var now = DateTime(2026, 11, 25, 11, 59, 59);
+
+    await http.runWithClient(() async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppShell(
+            service: const FoodService('edit-profile-token'),
+            now: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Good morning,'), findsOneWidget);
+      expect(find.text('Alex'), findsOneWidget);
+      final avatar = tester.widget<Image>(
+        find.descendant(
+          of: find.byType(HomeGreeting),
+          matching: find.byType(Image),
+        ),
+      );
+      expect((avatar.image as MemoryImage).bytes, base64Decode(_testPhoto));
+
+      for (final (hour, greeting) in [
+        (12, 'Good afternoon,'),
+        (18, 'Good evening,'),
+        (22, 'Good night,'),
+      ]) {
+        final next = DateTime(2026, 11, 25, hour);
+        final elapsed = next.difference(now);
+        now = next;
+        await tester.pump(elapsed);
+        expect(find.text(greeting), findsOneWidget);
+        expect(find.text('Today'), findsOneWidget);
+      }
+      expect(backend.reads, 1);
+      expect(tester.takeException(), isNull);
+    }, () => client);
+  });
+
   testWidgets('Profile keeps metric values and retries a failed save', (
     tester,
   ) async {
-    final backend = _ProfileBackend(failFirstSave: true);
+    final backend = _ProfileBackend(failedSaves: 1)..values['name'] = 'Alex';
     final client = backend.client();
     addTearDown(client.close);
 
     await http.runWithClient(() async {
-      await _openProfile(tester);
-      expect(backend.reads, 1);
+      await _openMe(tester);
+      final profileCard = _key('edit-my-profile');
+      expect(find.text('Alex'), findsOneWidget);
+      expect(find.text('Edit my profile'), findsNothing);
+      await _tap(tester, profileCard);
+      expect(backend.reads, 3);
+      expect(_value(tester, 'name'), 'Alex');
       expect(find.text('Non-binary'), findsOneWidget);
       expect(_value(tester, 'age'), '24');
       expect(_value(tester, 'height'), '170.02');
@@ -119,10 +192,11 @@ void main() {
       await _show(tester, _field('save'));
       expect(tester.widget<CupertinoButton>(_field('save')).onPressed, isNull);
 
+      await _enter(tester, 'name', 'Alex Chen');
       await _enter(tester, 'age', '25');
       await _enter(tester, 'phone', '');
       await _tap(tester, _field('save'));
-      const changes = {'age': 25, 'phone_number': ''};
+      const changes = {'name': 'Alex Chen', 'age': 25, 'phone_number': ''};
       expect(backend.patches, [changes]);
       expect(find.text(_saveError), findsOneWidget);
       expect(_value(tester, 'age'), '25');
@@ -131,16 +205,82 @@ void main() {
       expect(_value(tester, 'height-inches'), '6.94');
       expect(double.parse(_value(tester, 'weight')), closeTo(161.53, .01));
 
+      backend.values['photo'] = _testPhoto;
       await _tap(tester, _field('save'));
       expect(backend.patches, [changes, changes]);
       expect(find.text('Sign out'), findsOneWidget);
+      expect(find.text('Alex Chen'), findsOneWidget);
+      final avatar = tester.widget<Image>(
+        find.descendant(of: profileCard, matching: find.byType(Image)),
+      );
+      expect((avatar.image as MemoryImage).bytes, base64Decode(_testPhoto));
+      expect(backend.reads, 3);
       expect(_field('save'), findsNothing);
-      await _tap(tester, find.text('Edit my profile'));
-      expect(backend.reads, 2);
+      await _tap(tester, profileCard);
+      expect(backend.reads, 4);
       expect(_value(tester, 'age'), '25');
       expect(_value(tester, 'phone'), isEmpty);
       expect(_value(tester, 'height'), '170.02');
       expect(_value(tester, 'weight'), '73.27');
+      await _tap(tester, _key('page-back'));
+      await _tap(tester, _key('nav-home'));
+      expect(find.text('Alex Chen'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    }, () => client);
+  });
+
+  testWidgets('Photo alert can retry or cancel without losing the name', (
+    tester,
+  ) async {
+    _usePhoneSize(tester);
+    final backend = _ProfileBackend(failedSaves: 2);
+    final client = backend.client();
+    addTearDown(client.close);
+    await http.runWithClient(() async {
+      await tester.pumpWidget(
+        CupertinoApp(
+          home: CupertinoPageScaffold(
+            child: Builder(
+              builder: (context) => Center(
+                child: CupertinoButton(
+                  onPressed: () => Navigator.of(context).push<AccountProfile>(
+                    CupertinoPageRoute<AccountProfile>(
+                      builder: (_) => EditProfilePage(
+                        service: const FoodService('edit-profile-token'),
+                        pickPhoto: () async => XFile.fromData(
+                          base64Decode(_testPhoto),
+                          mimeType: 'image/png',
+                          name: 'photo.png',
+                        ),
+                      ),
+                    ),
+                  ),
+                  child: const Text('Open profile'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await _tap(tester, find.text('Open profile'));
+      await _enter(tester, 'name', 'Alex 陈');
+      await _tap(tester, _field('change-photo'));
+      await _tap(tester, _field('save'));
+      expect(find.text('Photo upload failed'), findsOneWidget);
+
+      await _tap(tester, find.text('Try again'));
+      expect(find.text('Photo upload failed'), findsOneWidget);
+      const attempted = {'name': 'Alex 陈', 'photo': _testPhoto};
+      expect(backend.patches, [attempted, attempted]);
+
+      await _tap(tester, find.text('Cancel'));
+      expect(find.text('Photo upload failed'), findsNothing);
+      expect(_value(tester, 'name'), 'Alex 陈');
+      await _tap(tester, _field('save'));
+      expect(backend.patches.last, {'name': 'Alex 陈'});
+      expect(find.text('Open profile'), findsOneWidget);
+      await _tap(tester, find.text('Open profile'));
+      expect(_value(tester, 'name'), 'Alex 陈');
       expect(tester.takeException(), isNull);
     }, () => client);
   });

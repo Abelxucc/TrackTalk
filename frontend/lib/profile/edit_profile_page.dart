@@ -1,13 +1,18 @@
+import 'dart:typed_data';
+
 import 'package:flutter/cupertino.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../food/food_service.dart';
 import '../registration/profile_details.dart';
 import '../shared/food_style.dart';
+import 'profile_avatar.dart';
 
 class EditProfilePage extends StatefulWidget {
-  const EditProfilePage({super.key, required this.service});
+  const EditProfilePage({super.key, required this.service, this.pickPhoto});
 
   final FoodService service;
+  final Future<XFile?> Function()? pickPhoto;
 
   @override
   State<EditProfilePage> createState() => _EditProfilePageState();
@@ -24,12 +29,15 @@ class _EditProfilePageState extends State<EditProfilePage> {
   );
   static const _cmPerInch = 2.54;
   static const _kgPerPound = .45359237;
+  static const _maxNameLength = 80;
+  static const _maxPhotoBytes = 1024 * 1024;
   static final _decimalInput = RegExp(r'^\d{1,4}(\.\d{1,2})?$');
   static final _ageInput = RegExp(r'^\d{1,3}$');
   static final _phoneSeparators = RegExp(r'[ ()\-.]');
   static final _phoneInput = RegExp(r'^\+?[0-9]{7,15}$');
   static final _trailingZeroes = RegExp(r'\.?0+$');
 
+  final _name = TextEditingController();
   final _age = TextEditingController();
   final _height = TextEditingController();
   final _feet = TextEditingController();
@@ -39,10 +47,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
   final _phone = TextEditingController();
 
   AccountProfile? _profile;
+  Uint8List? _pendingPhoto;
   ProfileGender? _gender;
   String? _loadError;
   String? _saveError;
   bool _saving = false;
+  bool _pickingPhoto = false;
   bool _confirming = false;
   bool _showValidation = false;
   bool _heightInFeet = false;
@@ -59,6 +69,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
   @override
   void dispose() {
     for (final field in [
+      _name,
       _age,
       _height,
       _feet,
@@ -98,6 +109,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       if (!mounted) return;
       setState(() {
         _profile = profile;
+        _name.text = profile.name;
         _gender = profile.gender;
         _age.text = profile.age?.toString() ?? '';
         _height.text = _decimalText(profile.heightCm);
@@ -192,6 +204,13 @@ class _EditProfilePageState extends State<EditProfilePage> {
     final errors = <String, String>{};
     final profile = _profile;
     if (profile == null) return (changes: changes, errors: errors);
+
+    final name = _name.text.trim();
+    if (name.runes.length > _maxNameLength) {
+      errors['name'] = 'Enter a name with $_maxNameLength characters or fewer.';
+    } else if (name != profile.name) {
+      changes['name'] = name;
+    }
     if (_gender != profile.gender && _gender != null) {
       changes['gender'] = _gender!.value;
     }
@@ -257,6 +276,123 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   void _edited(String _) => setState(() => _saveError = null);
 
+  Future<void> _pickPhoto() async {
+    if (_saving || _pickingPhoto) return;
+    FocusScope.of(context).unfocus();
+    setState(() => _pickingPhoto = true);
+    try {
+      while (mounted) {
+        try {
+          final file =
+              await (widget.pickPhoto?.call() ??
+                  ImagePicker().pickImage(
+                    source: ImageSource.gallery,
+                    maxWidth: 512,
+                    maxHeight: 512,
+                    imageQuality: 85,
+                    requestFullMetadata: false,
+                  ));
+          if (file == null || !mounted) return;
+          if (await file.length() > _maxPhotoBytes) {
+            throw const ProfilePhotoException('Choose a photo up to 1 MB.');
+          }
+          final bytes = await file.readAsBytes();
+          if (!mounted) return;
+          if (bytes.isEmpty) {
+            throw const ProfilePhotoException(
+              'Choose a photo that can be opened.',
+            );
+          }
+          setState(() {
+            _pendingPhoto = bytes;
+            _saveError = null;
+          });
+          return;
+        } catch (error) {
+          if (!mounted) return;
+          final retry = await _photoAlert(
+            title: 'Could not open photo',
+            message: error is ProfilePhotoException
+                ? error.message
+                : 'Please choose another photo.',
+          );
+          if (!retry) return;
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _pickingPhoto = false);
+    }
+  }
+
+  Future<bool> _photoAlert({
+    required String title,
+    required String message,
+  }) async {
+    return await showCupertinoDialog<bool>(
+          context: context,
+          barrierColor: const Color(0x66000000),
+          builder: (context) => FoodStyle.theme(
+            SafeArea(
+              minimum: const EdgeInsets.all(24),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 360),
+                  child: SingleChildScrollView(
+                    child: FoodStyle.card(
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Semantics(
+                            namesRoute: true,
+                            child: Text(
+                              title,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: _ink,
+                                fontSize: 21,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Text(message, textAlign: TextAlign.center),
+                          const SizedBox(height: 20),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: FoodStyle.secondary(
+                                  label: 'Cancel',
+                                  onPressed: () =>
+                                      Navigator.pop(context, false),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: FoodStyle.primary(
+                                  onPressed: () => Navigator.pop(context, true),
+                                  child: const Text(
+                                    'Try again',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ) ??
+        false;
+  }
+
   Future<void> _pickGender() async {
     FocusScope.of(context).unfocus();
     final options = ProfileGender.values;
@@ -287,10 +423,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
   }
 
   Future<void> _leave() async {
-    if (_saving || _confirming) return;
+    if (_saving || _pickingPhoto || _confirming) return;
     FocusScope.of(context).unfocus();
     final draft = _draft();
-    if (draft.changes.isNotEmpty || draft.errors.isNotEmpty) {
+    if (_pendingPhoto != null ||
+        draft.changes.isNotEmpty ||
+        draft.errors.isNotEmpty) {
       _confirming = true;
       final discarded = await FoodStyle.confirm(
         context,
@@ -306,7 +444,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
   }
 
   Future<void> _save() async {
-    if (_saving) return;
+    if (_saving || _pickingPhoto) return;
     final draft = _draft();
     if (draft.errors.isNotEmpty) {
       setState(() {
@@ -315,34 +453,63 @@ class _EditProfilePageState extends State<EditProfilePage> {
       });
       return;
     }
-    if (draft.changes.isEmpty) return;
+    final photo = _pendingPhoto;
+    if (draft.changes.isEmpty && photo == null) return;
     FocusScope.of(context).unfocus();
-    setState(() {
-      _saving = true;
-      _saveError = null;
-    });
-    try {
-      await widget.service.saveProfile(draft.changes);
-      if (mounted) Navigator.of(context).pop();
-    } catch (error) {
-      if (!mounted) return;
+    while (mounted) {
       setState(() {
-        _saving = false;
-        _saveError = error is FoodException
-            ? error.message
-            : 'Could not save your profile. Please try again.';
+        _saving = true;
+        _saveError = null;
       });
+      try {
+        final profile = await widget.service.saveProfile(
+          draft.changes,
+          photo: photo,
+        );
+        if (mounted) Navigator.of(context).pop(profile);
+        return;
+      } catch (error) {
+        if (!mounted) return;
+        if (photo == null ||
+            (error is FoodException && error.statusCode == 401)) {
+          setState(() {
+            _saving = false;
+            _saveError = error is FoodException
+                ? error.message
+                : 'Could not save your profile. Please try again.';
+          });
+          return;
+        }
+
+        setState(() => _saving = false);
+        final rejectedPhoto = error is ProfilePhotoException;
+        final retry = await _photoAlert(
+          title: 'Photo upload failed',
+          message: rejectedPhoto
+              ? error.message
+              : 'Please try again to save your photo.',
+        );
+        if (!mounted) return;
+        if (!retry || rejectedPhoto) {
+          setState(() => _pendingPhoto = null);
+          if (retry) await _pickPhoto();
+          return;
+        }
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final draft = _draft();
-    final dirty = draft.changes.isNotEmpty || draft.errors.isNotEmpty;
+    final dirty =
+        _pendingPhoto != null ||
+        draft.changes.isNotEmpty ||
+        draft.errors.isNotEmpty;
     final errors = _showValidation ? draft.errors : const <String, String>{};
     return FoodStyle.theme(
-      PopScope<void>(
-        canPop: !_saving && !dirty,
+      PopScope<AccountProfile>(
+        canPop: !_saving && !_pickingPhoto && !dirty,
         onPopInvokedWithResult: (didPop, _) {
           if (!didPop) _leave();
         },
@@ -380,7 +547,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
         leading: CupertinoButton(
           key: const Key('page-back'),
           padding: const EdgeInsets.only(right: 8),
-          onPressed: _saving ? null : _leave,
+          onPressed: _saving || _pickingPhoto ? null : _leave,
           child: const Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -433,6 +600,25 @@ class _EditProfilePageState extends State<EditProfilePage> {
       _section('Personal details'),
       const SizedBox(height: 12),
       _card([
+        _photoRow(),
+        _divider(vertical: 8),
+        Row(
+          children: [
+            const Expanded(child: Text('Name', style: _labelStyle)),
+            Expanded(
+              flex: 2,
+              child: _field(
+                'profile-name',
+                'Name',
+                _name,
+                TextInputType.name,
+                hint: 'Add name',
+              ),
+            ),
+          ],
+        ),
+        if (errors['name'] case final error?) _error(error),
+        _divider(vertical: 8),
         CupertinoButton(
           key: const Key('profile-gender'),
           padding: EdgeInsets.zero,
@@ -569,6 +755,29 @@ class _EditProfilePageState extends State<EditProfilePage> {
     ],
   );
 
+  Widget _photoRow() => Row(
+    children: [
+      ProfileAvatar(photo: _pendingPhoto ?? _profile?.photo),
+      Expanded(
+        child: Align(
+          alignment: AlignmentDirectional.centerEnd,
+          child: CupertinoButton(
+            key: const Key('profile-change-photo'),
+            padding: const EdgeInsetsDirectional.only(start: 12),
+            onPressed: _saving || _pickingPhoto ? null : _pickPhoto,
+            child: _pickingPhoto
+                ? const CupertinoActivityIndicator()
+                : Text(
+                    'Change photo',
+                    textAlign: TextAlign.end,
+                    style: _labelStyle.copyWith(color: FoodStyle.forest),
+                  ),
+          ),
+        ),
+      ),
+    ],
+  );
+
   Widget _section(String title) => Semantics(
     header: true,
     child: Text(
@@ -600,9 +809,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
     ),
   );
 
-  Widget _divider() => const Padding(
-    padding: EdgeInsets.symmetric(vertical: 12),
-    child: SizedBox(height: 1, child: ColoredBox(color: Color(0xFFE2E8DF))),
+  Widget _divider({double vertical = 12}) => Padding(
+    padding: EdgeInsets.symmetric(vertical: vertical),
+    child: const SizedBox(
+      height: 1,
+      child: ColoredBox(color: Color(0xFFE2E8DF)),
+    ),
   );
 
   Widget _measurement(
@@ -692,6 +904,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
       controller: controller,
       enabled: !_saving,
       keyboardType: keyboard,
+      textCapitalization: keyboard == TextInputType.name
+          ? TextCapitalization.words
+          : TextCapitalization.none,
       onChanged: _edited,
       placeholder: hint,
       placeholderStyle: const TextStyle(color: _muted, fontSize: 15),
@@ -738,7 +953,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
         ],
         CupertinoButton.filled(
           key: const Key('profile-save'),
-          onPressed: !_saving && dirty ? _save : null,
+          onPressed: !_saving && !_pickingPhoto && dirty ? _save : null,
           padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 12),
           borderRadius: BorderRadius.circular(18),
           disabledColor: FoodStyle.pale,

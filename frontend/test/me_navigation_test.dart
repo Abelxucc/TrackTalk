@@ -111,6 +111,33 @@ void main() {
     }, () => client);
   });
 
+  testWidgets('Add food opens the Food composer and preserves Activity input', (
+    tester,
+  ) async {
+    phone(tester);
+    final client = MockClient((_) async => http.Response('[]', 200));
+    addTearDown(client.close);
+    await http.runWithClient(() async {
+      await tester.pumpWidget(app);
+      await tester.pumpAndSettle();
+      final activityMode = find.byKey(const Key('record-mode-activity'));
+      final activityInput = find.byKey(const Key('activity-description'));
+      const activityDraft = 'I walked for 20 minutes.';
+
+      await tap(tester, find.byKey(const Key('nav-add')));
+      await tap(tester, activityMode);
+      await tester.enterText(activityInput, activityDraft);
+      await tap(tester, find.byKey(const Key('nav-food')));
+      await tap(tester, find.text('+ Add food'));
+
+      expect(find.byKey(const Key('food-description')), findsOneWidget);
+      expect(activityInput, findsNothing);
+
+      await tap(tester, activityMode);
+      expect(find.text(activityDraft), findsOneWidget);
+    }, () => client);
+  });
+
   testWidgets(
     'Food allergies save selections and refresh both recommendations',
     (tester) async {
@@ -270,12 +297,17 @@ void main() {
   );
 
   testWidgets(
-    'Me has placeholder cards and selection animates across the bar',
+    'Me opens Settings and About us and selection animates across the bar',
     (tester) async {
       phone(tester);
       await tester.pumpWidget(app);
       await tester.pumpAndSettle();
       expect(find.byType(FoodNavigation), findsOneWidget);
+      final addButton = find.byKey(const Key('nav-add'));
+      expect(
+        find.descendant(of: addButton, matching: find.text('Add')),
+        findsOneWidget,
+      );
       final start = tester.getCenter(find.byKey(const Key('nav-selection'))).dx;
       await tester.tap(find.byKey(const Key('nav-me')));
       await tester.pump();
@@ -291,21 +323,26 @@ void main() {
         tester.getCenter(find.byKey(const Key('nav-selection'))).dx,
         closeTo(end, .1),
       );
-      expect(find.text('Edit my profile'), findsOneWidget);
-      expect(find.text('Settings'), findsOneWidget);
-      expect(find.text('About us'), findsOneWidget);
-      expect(find.text('Coming soon'), findsNWidgets(2));
+      expect(find.text('Your profile'), findsOneWidget);
+      expect(find.text('Edit my profile'), findsNothing);
       expect(find.text('Sign out'), findsOneWidget);
-      await tester.tap(find.text('Settings'));
-      await tester.pumpAndSettle();
-      expect(find.text('Coming soon'), findsNWidgets(2));
+      for (final (label, content) in [
+        ('Settings', 'Account'),
+        ('About us', 'TrackTalk'),
+      ]) {
+        expect(find.text(label), findsOneWidget);
+        await tap(tester, find.text(label));
+        expect(find.text(content), findsOneWidget);
+        await tap(tester, find.byKey(const Key('page-back')));
+        expect(find.text('Your profile'), findsOneWidget);
+      }
       await tap(tester, find.byKey(const Key('nav-home')));
       expect(find.text('Today'), findsOneWidget);
       await tap(tester, find.byKey(const Key('nav-food')));
       expect(find.text('This week'), findsOneWidget);
       await tap(tester, find.byKey(const Key('nav-activity')));
       expect(find.byKey(const Key('activity-diary-week')), findsOneWidget);
-      await tap(tester, find.byKey(const Key('nav-add')));
+      await tap(tester, addButton);
       expect(find.text('Add record'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
@@ -368,7 +405,10 @@ void main() {
       phone(tester);
       final response = Completer<http.Response>();
       var calls = 0;
-      final client = MockClient((request) {
+      final client = MockClient((request) async {
+        if (request.url.path == '/api/auth/profile/') {
+          return http.Response('{}', 200);
+        }
         calls++;
         expect(request.method, 'POST');
         expect(request.url.path, '/api/auth/logout/');

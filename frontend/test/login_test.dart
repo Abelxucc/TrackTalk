@@ -14,6 +14,8 @@ MockClient _loginClient() => MockClient((request) async {
     case '/api/food-records/':
     case '/api/activity-records/':
       return http.Response('[]', 200);
+    case '/api/auth/profile/':
+      return http.Response('{}', 200);
     case '/api/food-recommendations/':
       return http.Response(
         '{"week_start":"2026-11-02","week_end":"2026-11-08",'
