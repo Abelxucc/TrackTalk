@@ -119,10 +119,10 @@ class _AppShellState extends State<AppShell> {
         FoodPage(key: _recordPage, service: widget.service, now: widget.now),
   );
 
-  void _logActivity() {
+  void _openComposer({required bool activity}) {
     if (_busy) return;
     // Use the existing composer so both chat drafts stay in place.
-    _recordPage.currentState?.showActivity();
+    _recordPage.currentState?.selectMode(activity);
     _select(FoodDestination.add);
   }
 
@@ -209,7 +209,7 @@ class _AppShellState extends State<AppShell> {
                             active: _selected == FoodDestination.food,
                             openHistory: (date) =>
                                 _openHistory(date, HistoryFilter.food),
-                            addFood: () => _select(FoodDestination.add),
+                            addFood: () => _openComposer(activity: false),
                           ),
                           ExcludeFocus(
                             excluding: _selected != FoodDestination.add,
@@ -241,7 +241,7 @@ class _AppShellState extends State<AppShell> {
                               record: record,
                               service: widget.service,
                             ),
-                            logActivity: _logActivity,
+                            logActivity: () => _openComposer(activity: true),
                           ),
                           FutureBuilder<AccountProfile?>(
                             future: _profile,

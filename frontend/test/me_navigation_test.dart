@@ -111,6 +111,33 @@ void main() {
     }, () => client);
   });
 
+  testWidgets('Add food opens the Food composer and preserves Activity input', (
+    tester,
+  ) async {
+    phone(tester);
+    final client = MockClient((_) async => http.Response('[]', 200));
+    addTearDown(client.close);
+    await http.runWithClient(() async {
+      await tester.pumpWidget(app);
+      await tester.pumpAndSettle();
+      final activityMode = find.byKey(const Key('record-mode-activity'));
+      final activityInput = find.byKey(const Key('activity-description'));
+      const activityDraft = 'I walked for 20 minutes.';
+
+      await tap(tester, find.byKey(const Key('nav-add')));
+      await tap(tester, activityMode);
+      await tester.enterText(activityInput, activityDraft);
+      await tap(tester, find.byKey(const Key('nav-food')));
+      await tap(tester, find.text('+ Add food'));
+
+      expect(find.byKey(const Key('food-description')), findsOneWidget);
+      expect(activityInput, findsNothing);
+
+      await tap(tester, activityMode);
+      expect(find.text(activityDraft), findsOneWidget);
+    }, () => client);
+  });
+
   testWidgets(
     'Food allergies save selections and refresh both recommendations',
     (tester) async {
@@ -276,6 +303,11 @@ void main() {
       await tester.pumpWidget(app);
       await tester.pumpAndSettle();
       expect(find.byType(FoodNavigation), findsOneWidget);
+      final addButton = find.byKey(const Key('nav-add'));
+      expect(
+        find.descendant(of: addButton, matching: find.text('Add')),
+        findsOneWidget,
+      );
       final start = tester.getCenter(find.byKey(const Key('nav-selection'))).dx;
       await tester.tap(find.byKey(const Key('nav-me')));
       await tester.pump();
@@ -310,7 +342,7 @@ void main() {
       expect(find.text('This week'), findsOneWidget);
       await tap(tester, find.byKey(const Key('nav-activity')));
       expect(find.byKey(const Key('activity-diary-week')), findsOneWidget);
-      await tap(tester, find.byKey(const Key('nav-add')));
+      await tap(tester, addButton);
       expect(find.text('Add record'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },

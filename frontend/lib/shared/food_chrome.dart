@@ -192,7 +192,7 @@ class FoodNavigation extends StatelessWidget {
                           ),
                           _destination(
                             FoodDestination.add,
-                            'Add record',
+                            'Add',
                             null,
                             duration,
                           ),
@@ -236,7 +236,7 @@ class FoodNavigation extends StatelessWidget {
     return Expanded(
       child: Semantics(
         key: Key('nav-${destination.name}'),
-        label: label,
+        label: destination == FoodDestination.add ? 'Add record' : label,
         button: true,
         enabled: action != null,
         selected: selected,
@@ -253,42 +253,44 @@ class FoodNavigation extends StatelessWidget {
                   duration: duration,
                   curve: Curves.easeOutCubic,
                   scale: selected ? 1.06 : 1,
-                  child: asset == null
-                      ? Icon(
-                          CupertinoIcons.plus,
-                          size: 29,
-                          color: selected ? FoodStyle.forest : FoodStyle.ink,
-                        )
-                      : Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Image.asset(
-                              'assets/images/$asset',
-                              width: 38,
-                              height: 34,
-                              fit: BoxFit.contain,
-                            ),
-                            const SizedBox(height: 1),
-                            AnimatedDefaultTextStyle(
-                              duration: duration,
-                              style: TextStyle(
-                                fontFamily: 'CupertinoSystemText',
-                                fontSize: 10,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 38,
+                        height: 34,
+                        child: asset == null
+                            ? Icon(
+                                CupertinoIcons.plus,
+                                size: 29,
                                 color: selected
                                     ? FoodStyle.forest
                                     : FoodStyle.ink,
-                                fontWeight: selected
-                                    ? FontWeight.w600
-                                    : FontWeight.w400,
+                              )
+                            : Image.asset(
+                                'assets/images/$asset',
+                                fit: BoxFit.contain,
                               ),
-                              child: Text(
-                                label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
+                      ),
+                      const SizedBox(height: 1),
+                      AnimatedDefaultTextStyle(
+                        duration: duration,
+                        style: TextStyle(
+                          fontFamily: 'CupertinoSystemText',
+                          fontSize: 10,
+                          color: selected ? FoodStyle.forest : FoodStyle.ink,
+                          fontWeight: selected
+                              ? FontWeight.w600
+                              : FontWeight.w400,
                         ),
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
